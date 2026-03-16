@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Bookmark, BookmarkCheck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Bookmark, BookmarkCheck, ZoomIn, ZoomOut } from 'lucide-react';
 import { Theme, Bookmark as BookmarkType, ViewMode, FontFamily, ReaderSettings } from '../types';
 import { THEMES, FONT_FAMILIES } from '../constants';
 import { cn } from '../utils';
@@ -56,6 +56,24 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const interactionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentTheme = THEMES[theme];
+
+  // Optimize for landscape mode and responsive scaling
+  useEffect(() => {
+    const handleOrientationChange = () => {
+      const isLandscape = window.innerWidth > window.innerHeight;
+      if (isLandscape) {
+        // In landscape, increase default scale to fill width better
+        setScale(prev => (prev === 1.5 ? 2.2 : prev));
+      } else {
+        // In portrait, return to a comfortable reading scale
+        setScale(prev => (prev === 2.2 ? 1.5 : prev));
+      }
+    };
+
+    window.addEventListener('resize', handleOrientationChange);
+    handleOrientationChange();
+    return () => window.removeEventListener('resize', handleOrientationChange);
+  }, []);
 
   // Callback ref to handle canvas mounting
   const canvasRef = useCallback((node: HTMLCanvasElement | null) => {
@@ -217,9 +235,16 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const handleInteraction = useCallback(() => {
     if (!isAutoScrolling) return;
     
-    // Completely pause auto-scroll when user interacts
-    onUpdate({ isAutoScrolling: false });
-  }, [isAutoScrolling, onUpdate]);
+    setIsUserInteracting(true);
+    
+    if (interactionTimeoutRef.current) {
+      clearTimeout(interactionTimeoutRef.current);
+    }
+    
+    interactionTimeoutRef.current = setTimeout(() => {
+      setIsUserInteracting(false);
+    }, 2000); // Resume after 2 seconds of no interaction
+  }, [isAutoScrolling]);
 
   // Smoother auto-scroll using requestAnimationFrame
   useEffect(() => {
@@ -332,7 +357,28 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             <div className="text-sm font-medium" style={{ color: currentTheme.text }}>
               Page {currentPage} of {numPages}
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-2 items-center">
+              <div className="flex items-center bg-black/10 rounded-full px-2 mr-2">
+                <button 
+                  onClick={() => setScale(prev => Math.max(0.5, prev - 0.2))}
+                  className="p-2 rounded-full hover:bg-black/10 transition-colors"
+                  style={{ color: currentTheme.text }}
+                  title="Zoom Out"
+                >
+                  <ZoomOut size={18} />
+                </button>
+                <span className="text-xs font-mono w-12 text-center" style={{ color: currentTheme.text }}>
+                  {Math.round(scale * 100)}%
+                </span>
+                <button 
+                  onClick={() => setScale(prev => Math.min(4, prev + 0.2))}
+                  className="p-2 rounded-full hover:bg-black/10 transition-colors"
+                  style={{ color: currentTheme.text }}
+                  title="Zoom In"
+                >
+                  <ZoomIn size={18} />
+                </button>
+              </div>
               <button 
                 onClick={() => onToggleBookmark(currentPage)}
                 className="p-2 rounded-full hover:bg-black/10 transition-colors"
@@ -358,6 +404,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             style={{ scrollBehavior: isAutoScrolling ? 'auto' : 'smooth' }}
             onMouseDown={handleInteraction}
             onTouchStart={handleInteraction}
+            onTouchMove={handleInteraction}
             onWheel={handleInteraction}
           >
             {viewMode === 'continuous' && pdf ? (
