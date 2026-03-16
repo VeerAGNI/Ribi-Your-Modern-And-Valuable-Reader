@@ -88,6 +88,10 @@ export default function App() {
     }));
   };
 
+  const updateSettings = (updates: Partial<ReaderSettings>) => {
+    setSettings(prev => ({ ...prev, ...updates }));
+  };
+
   const activeBook = books.find(b => b.id === activeBookId);
   const currentTheme = THEMES[settings.theme];
 
@@ -112,6 +116,7 @@ export default function App() {
             file={activeFile || ''} 
             currentPage={activeBook?.currentPage || 1}
             onPageChange={handlePageChange}
+            onUpdate={updateSettings}
             theme={settings.theme}
             viewMode={settings.viewMode}
             fontFamily={settings.fontFamily}

@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Bookmark, BookmarkCheck } from 'lucide-react';
-import { Theme, Bookmark as BookmarkType, ViewMode, FontFamily } from '../types';
+import { Theme, Bookmark as BookmarkType, ViewMode, FontFamily, ReaderSettings } from '../types';
 import { THEMES, FONT_FAMILIES } from '../constants';
 import { cn } from '../utils';
-import { ReaderView } from './ReaderView';
+import { PDFPage } from './PDFPage';
 
 // Set up worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -14,6 +14,7 @@ interface PDFReaderProps {
   file: File | string;
   currentPage: number;
   onPageChange: (page: number) => void;
+  onUpdate: (updates: Partial<ReaderSettings>) => void;
   theme: Theme;
   viewMode: ViewMode;
   fontFamily: FontFamily;
@@ -30,6 +31,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   file,
   currentPage,
   onPageChange,
+  onUpdate,
   theme,
   viewMode,
   fontFamily,
@@ -43,12 +45,15 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 }) => {
   const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [scale, setScale] = useState(1.5);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isUserInteracting, setIsUserInteracting] = useState(false);
+  const interactionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentTheme = THEMES[theme];
 
@@ -83,7 +88,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   }, [file]);
 
   const renderPage = useCallback(async (pageNum: number) => {
-    if (!pdf || !canvasElement) return;
+    if (!pdf || !canvasElement || viewMode !== 'page') return;
 
     // Cancel and WAIT for any ongoing render task to finish/fail
     if (renderTaskRef.current) {
@@ -121,7 +126,6 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
       await renderTask.promise;
       
-      // Only clear the ref if it's still pointing to this task
       if (renderTaskRef.current === renderTask) {
         renderTaskRef.current = null;
       }
@@ -131,13 +135,13 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       }
       console.error('Error rendering page:', error);
     }
-  }, [pdf, scale, canvasElement]);
+  }, [pdf, scale, canvasElement, viewMode]);
 
   useEffect(() => {
-    if (pdf && canvasElement) {
+    if (pdf && canvasElement && viewMode === 'page') {
       renderPage(currentPage);
     }
-  }, [pdf, currentPage, renderPage, canvasElement]);
+  }, [pdf, currentPage, renderPage, canvasElement, viewMode]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -148,6 +152,26 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       setIsFullscreen(false);
     }
   };
+
+  // Background pre-loader to cache all pages
+  useEffect(() => {
+    if (!pdf || loading) return;
+
+    const cacheAllPages = async () => {
+      for (let i = 1; i <= numPages; i++) {
+        try {
+          // Fetching the page triggers internal PDF.js caching
+          await pdf.getPage(i);
+          // Small delay to keep UI responsive
+          if (i % 5 === 0) await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (e) {
+          console.warn(`Failed to pre-cache page ${i}`);
+        }
+      }
+    };
+
+    cacheAllPages();
+  }, [pdf, loading, numPages]);
 
   const isBookmarked = bookmarks.some(b => b.pageNumber === currentPage);
 
@@ -162,22 +186,59 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return filter;
   };
 
+  const [scrollPercentage, setScrollPercentage] = useState(0);
+
+  // Track current page and percentage based on scroll position
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !pdf) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = viewport;
+      const totalScrollable = scrollHeight - clientHeight;
+      const percentage = totalScrollable > 0 ? Math.round((scrollTop / totalScrollable) * 100) : 0;
+      setScrollPercentage(percentage);
+
+      if (viewMode === 'continuous') {
+        const estimatedPage = Math.max(1, Math.min(numPages, Math.ceil((scrollTop / scrollHeight) * numPages) + 1));
+        // We don't call onPageChange here to avoid infinite loops, 
+        // but we could if we check if it's different enough.
+      }
+    };
+
+    viewport.addEventListener('scroll', handleScroll, { passive: true });
+    // Initial calculation
+    handleScroll();
+    
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, [viewMode, pdf, numPages, currentPage]);
+
+  // Handle user interaction to pause auto-scroll
+  const handleInteraction = useCallback(() => {
+    if (!isAutoScrolling) return;
+    
+    // Completely pause auto-scroll when user interacts
+    onUpdate({ isAutoScrolling: false });
+  }, [isAutoScrolling, onUpdate]);
+
   // Smoother auto-scroll using requestAnimationFrame
   useEffect(() => {
-    if (!isAutoScrolling || autoScrollSpeed === 0 || !containerRef.current) return;
+    if (!isAutoScrolling || autoScrollSpeed === 0 || !viewportRef.current || isUserInteracting) return;
 
     let rafId: number;
     const scroll = () => {
-      if (containerRef.current) {
+      if (viewportRef.current && !isUserInteracting) {
         // Slowed down speed: speed 1 = 0.5px per frame
         const speedMultiplier = 0.5;
-        containerRef.current.scrollTop += autoScrollSpeed * speedMultiplier;
+        viewportRef.current.scrollTop += autoScrollSpeed * speedMultiplier;
 
-        const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-        if (scrollTop + clientHeight >= scrollHeight - 2) {
-          if (currentPage < numPages) {
-            onPageChange(currentPage + 1);
-            containerRef.current.scrollTop = 0;
+        if (viewMode === 'page') {
+          const { scrollTop, scrollHeight, clientHeight } = viewportRef.current;
+          if (scrollTop + clientHeight >= scrollHeight - 2) {
+            if (currentPage < numPages) {
+              onPageChange(currentPage + 1);
+              viewportRef.current.scrollTop = 0;
+            }
           }
         }
       }
@@ -186,7 +247,65 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
     rafId = requestAnimationFrame(scroll);
     return () => cancelAnimationFrame(rafId);
-  }, [isAutoScrolling, autoScrollSpeed, currentPage, numPages, onPageChange]);
+  }, [isAutoScrolling, autoScrollSpeed, currentPage, numPages, onPageChange, viewMode, isUserInteracting]);
+
+  // Track current page based on scroll position in continuous mode
+  useEffect(() => {
+    if (viewMode !== 'continuous' || !viewportRef.current || !pdf) return;
+
+    const handleScroll = () => {
+      if (!viewportRef.current) return;
+      
+      const { scrollTop, clientHeight } = viewportRef.current;
+      const scrollCenter = scrollTop + clientHeight / 2;
+      
+      // Find the page that is currently at the center of the viewport
+      const pageElements = Array.from({ length: numPages }, (_, i) => 
+        document.getElementById(`pdf-page-${i + 1}`)
+      );
+      
+      let closestPage = 1;
+      let minDistance = Infinity;
+      
+      pageElements.forEach((el, index) => {
+        if (el) {
+          const distance = Math.abs(el.offsetTop + el.offsetHeight / 2 - scrollCenter);
+          if (distance < minDistance) {
+            minDistance = distance;
+            closestPage = index + 1;
+          }
+        }
+      });
+      
+      if (closestPage !== currentPage) {
+        onPageChange(closestPage);
+      }
+    };
+
+    const viewport = viewportRef.current;
+    viewport.addEventListener('scroll', handleScroll, { passive: true });
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, [viewMode, pdf, numPages, currentPage, onPageChange]);
+
+  // Handle page navigation
+  const handlePageNavigation = (newPage: number) => {
+    if (newPage < 1 || newPage > numPages) return;
+    
+    if (viewMode === 'continuous') {
+      const pageElement = document.getElementById(`pdf-page-${newPage}`);
+      if (pageElement && viewportRef.current) {
+        viewportRef.current.scrollTo({
+          top: pageElement.offsetTop,
+          behavior: 'smooth'
+        });
+      }
+    } else {
+      onPageChange(newPage);
+      if (viewportRef.current) {
+        viewportRef.current.scrollTop = 0;
+      }
+    }
+  };
 
   return (
     <div 
@@ -232,19 +351,31 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
           </div>
 
           {/* Reader Viewport */}
-          <div className="flex-1 w-full overflow-y-auto custom-scrollbar" id="reader-viewport" style={{ scrollBehavior: isAutoScrolling ? 'auto' : 'smooth' }}>
-            {viewMode === 'reader' && pdf ? (
-              <ReaderView 
-                pdf={pdf}
-                theme={theme}
-                fontFamily={fontFamily}
-                fontSize={fontSize}
-                lineHeight={lineHeight}
-                currentPage={currentPage}
-                onPageChange={onPageChange}
-                isAutoScrolling={isAutoScrolling}
-                autoScrollSpeed={autoScrollSpeed}
-              />
+          <div 
+            ref={viewportRef}
+            className="flex-1 w-full overflow-y-auto custom-scrollbar" 
+            id="reader-viewport" 
+            style={{ scrollBehavior: isAutoScrolling ? 'auto' : 'smooth' }}
+            onMouseDown={handleInteraction}
+            onTouchStart={handleInteraction}
+            onWheel={handleInteraction}
+          >
+            {viewMode === 'continuous' && pdf ? (
+              <div className="flex flex-col items-center py-8">
+                {Array.from({ length: numPages }, (_, i) => (
+                  <div key={i + 1} id={`pdf-page-${i + 1}`}>
+                    <PDFPage 
+                      pdf={pdf}
+                      pageNumber={i + 1}
+                      scale={scale}
+                      brightness={brightness}
+                      contrast={fontSize}
+                      theme={theme}
+                      onVisible={() => {}}
+                    />
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="flex justify-center p-8 min-h-full">
                 <motion.div
@@ -267,17 +398,17 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
           <div className="absolute bottom-8 left-0 right-0 flex justify-center items-center gap-8 z-10 pointer-events-none">
             <button
               disabled={currentPage <= 1}
-              onClick={() => onPageChange(currentPage - 1)}
+              onClick={() => handlePageNavigation(currentPage - 1)}
               className="p-4 rounded-full bg-black/10 backdrop-blur-md text-white hover:bg-black/20 transition-all pointer-events-auto disabled:opacity-30"
             >
               <ChevronLeft size={24} />
             </button>
             <div className="px-6 py-2 rounded-full bg-black/10 backdrop-blur-md text-white font-mono text-sm pointer-events-auto">
-              {Math.round((currentPage / numPages) * 100)}%
+              {viewMode === 'continuous' ? `${scrollPercentage}%` : `${Math.round((currentPage / numPages) * 100)}%`}
             </div>
             <button
               disabled={currentPage >= numPages}
-              onClick={() => onPageChange(currentPage + 1)}
+              onClick={() => handlePageNavigation(currentPage + 1)}
               className="p-4 rounded-full bg-black/10 backdrop-blur-md text-white hover:bg-black/20 transition-all pointer-events-auto disabled:opacity-30"
             >
               <ChevronRight size={24} />

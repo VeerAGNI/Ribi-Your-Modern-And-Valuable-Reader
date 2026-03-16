@@ -1,5 +1,5 @@
 export type Theme = 'light' | 'dark' | 'sepia' | 'nord' | 'midnight';
-export type ViewMode = 'page' | 'continuous' | 'reader';
+export type ViewMode = 'page' | 'continuous';
 export type FontFamily = 'sans' | 'serif' | 'mono' | 'book';
 
 export interface Bookmark {

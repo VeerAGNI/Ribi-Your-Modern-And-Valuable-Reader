@@ -22,14 +22,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
 
   const viewModeOptions: { id: ViewMode; label: string }[] = [
     { id: 'page', label: 'Single Page' },
-    { id: 'reader', label: 'Reader Mode' },
-  ];
-
-  const fontOptions: { id: FontFamily; label: string }[] = [
-    { id: 'sans', label: 'Sans' },
-    { id: 'serif', label: 'Serif' },
-    { id: 'mono', label: 'Mono' },
-    { id: 'book', label: 'Book' },
+    { id: 'continuous', label: 'Continuous' },
   ];
 
   return (
@@ -82,56 +75,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
         </div>
       </section>
 
-      {/* Font Family (Only for Reader Mode) */}
-      {settings.viewMode === 'reader' && (
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest mb-4 opacity-50" style={{ color: currentTheme.text }}>
-            Font Family
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            {fontOptions.map(opt => (
-              <button
-                key={opt.id}
-                onClick={() => onUpdate({ fontFamily: opt.id })}
-                className={cn(
-                  "p-3 rounded-xl transition-all border-2 text-xs font-bold",
-                  settings.fontFamily === opt.id 
-                    ? "border-blue-500 bg-blue-500/5 text-blue-500" 
-                    : "border-transparent hover:bg-black/5"
-                )}
-                style={{ 
-                  color: settings.fontFamily === opt.id ? '#3B82F6' : currentTheme.text,
-                  fontFamily: FONT_FAMILIES[opt.id]
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Line Height (Only for Reader Mode) */}
-      {settings.viewMode === 'reader' && (
-        <section>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-bold uppercase tracking-widest opacity-50" style={{ color: currentTheme.text }}>
-              Line Height
-            </h3>
-            <span className="text-xs font-mono" style={{ color: currentTheme.text }}>{settings.lineHeight}</span>
-          </div>
-          <input 
-            type="range"
-            min="1"
-            max="2.5"
-            step="0.1"
-            value={settings.lineHeight}
-            onChange={(e) => onUpdate({ lineHeight: parseFloat(e.target.value) })}
-            className="w-full h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-          />
-        </section>
-      )}
-
       {/* Brightness */}
       <section>
         <div className="flex justify-between items-center mb-4">
@@ -178,7 +121,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
           <input 
             type="range"
             min="0"
-            max="5"
+            max="10"
             step="0.1"
             value={settings.autoScrollSpeed}
             onChange={(e) => onUpdate({ autoScrollSpeed: parseFloat(e.target.value) })}
