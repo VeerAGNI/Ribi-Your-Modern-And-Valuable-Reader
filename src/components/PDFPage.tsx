@@ -109,8 +109,9 @@ export const PDFPage = React.memo(({
         canvas.height = renderViewport.height;
         canvas.width = renderViewport.width;
         canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        canvas.className = "max-w-full h-auto block";
+        canvas.style.maxWidth = '100%';
+        canvas.style.height = 'auto';
+        canvas.className = "max-w-full block";
 
         const renderContext = {
           canvasContext: context,
