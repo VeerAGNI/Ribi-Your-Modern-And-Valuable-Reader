@@ -130,51 +130,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
           <span className="text-[10px] opacity-50" style={{ color: currentTheme.text }}>Fast</span>
         </div>
       </section>
-
-      {/* Text Sharpness / Contrast */}
-      <section>
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-xs font-bold uppercase tracking-widest opacity-50" style={{ color: currentTheme.text }}>
-            {settings.viewMode === 'reader' ? 'Font Size' : 'Text Contrast / Sharpness'}
-          </h3>
-          <span className="text-xs font-mono" style={{ color: currentTheme.text }}>{settings.fontSize}%</span>
-        </div>
-        <input 
-          type="range"
-          min="80"
-          max="200"
-          value={settings.fontSize}
-          onChange={(e) => onUpdate({ fontSize: parseInt(e.target.value) })}
-          className="w-full h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-        />
-      </section>
-
-      {/* Typography (Simulated for PDF) */}
-      <section>
-        <h3 className="text-xs font-bold uppercase tracking-widest mb-4 opacity-50" style={{ color: currentTheme.text }}>
-          Reading Experience
-        </h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between p-3 rounded-xl" style={{ backgroundColor: currentTheme.secondary }}>
-            <div className="flex items-center gap-3">
-              <Type size={18} style={{ color: currentTheme.text }} />
-              <span className="text-sm font-medium" style={{ color: currentTheme.text }}>High Quality Rendering</span>
-            </div>
-            <div className="w-10 h-5 bg-blue-500 rounded-full flex items-center px-1">
-              <div className="w-3 h-3 bg-white rounded-full ml-auto" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between p-3 rounded-xl" style={{ backgroundColor: currentTheme.secondary }}>
-            <div className="flex items-center gap-3">
-              <MousePointer2 size={18} style={{ color: currentTheme.text }} />
-              <span className="text-sm font-medium" style={{ color: currentTheme.text }}>Smooth Vertical Scroll</span>
-            </div>
-            <div className="w-10 h-5 bg-blue-500 rounded-full flex items-center px-1">
-              <div className="w-3 h-3 bg-white rounded-full ml-auto" />
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 };

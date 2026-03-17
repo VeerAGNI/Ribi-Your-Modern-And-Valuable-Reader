@@ -11,7 +11,7 @@ import { PDFPage } from './PDFPage';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 interface PDFReaderProps {
-  file: File | string;
+  file: Blob | string;
   currentPage: number;
   onPageChange: (page: number) => void;
   onUpdate: (updates: Partial<ReaderSettings>) => void;
@@ -51,6 +51,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const [numPages, setNumPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [scale, setScale] = useState(1.5);
+  const [isLandscape, setIsLandscape] = useState(window.innerWidth > window.innerHeight);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isUserInteracting, setIsUserInteracting] = useState(false);
   const interactionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -59,20 +60,22 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
   // Optimize for landscape mode and responsive scaling
   useEffect(() => {
-    const handleOrientationChange = () => {
-      const isLandscape = window.innerWidth > window.innerHeight;
-      if (isLandscape) {
-        // In landscape, increase default scale to fill width better
-        setScale(prev => (prev === 1.5 ? 2.2 : prev));
+    const handleResize = () => {
+      const landscape = window.innerWidth > window.innerHeight;
+      setIsLandscape(landscape);
+      
+      // Auto-adjust scale for better readability
+      // We use a slightly higher scale in landscape to fill the width
+      if (landscape) {
+        setScale(prev => (prev < 2.0 ? 2.2 : prev));
       } else {
-        // In portrait, return to a comfortable reading scale
-        setScale(prev => (prev === 2.2 ? 1.5 : prev));
+        setScale(prev => (prev > 1.8 ? 1.5 : prev));
       }
     };
 
-    window.addEventListener('resize', handleOrientationChange);
-    handleOrientationChange();
-    return () => window.removeEventListener('resize', handleOrientationChange);
+    window.addEventListener('resize', handleResize);
+    handleResize();
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   // Callback ref to handle canvas mounting
@@ -126,20 +129,30 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     try {
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale });
+      const pixelRatio = window.devicePixelRatio || 1;
+      // Clever technique: Render at 3x scale for high quality, even for low quality PDFs
+      const renderViewport = page.getViewport({ scale: scale * pixelRatio * 3 });
+      
       const canvas = canvasElement;
       const context = canvas.getContext('2d');
 
       if (!context) return;
 
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
+      // Enable high quality image smoothing
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+
+      canvas.height = renderViewport.height;
+      canvas.width = renderViewport.width;
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
 
       const renderContext = {
         canvasContext: context,
-        viewport: viewport,
+        viewport: renderViewport,
       };
 
-      const renderTask = page.render(renderContext);
+      const renderTask = page.render(renderContext as any);
       renderTaskRef.current = renderTask;
 
       await renderTask.promise;
@@ -195,7 +208,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
   // Theme-aware PDF filters
   const getPdfFilter = () => {
-    let filter = `brightness(${brightness}%) contrast(${fontSize}%)`;
+    let filter = `brightness(${brightness}%) contrast(100%)`;
     if (theme === 'dark' || theme === 'midnight' || theme === 'nord') {
       filter += ' invert(90%) hue-rotate(180deg)';
     } else if (theme === 'sepia') {
@@ -416,15 +429,19 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                       pageNumber={i + 1}
                       scale={scale}
                       brightness={brightness}
-                      contrast={fontSize}
+                      contrast={100}
                       theme={theme}
+                      isLandscape={isLandscape}
                       onVisible={() => {}}
                     />
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="flex justify-center p-8 min-h-full">
+              <div className={cn(
+                "flex justify-center items-start min-h-full",
+                isLandscape ? "p-2" : "p-8"
+              )}>
                 <motion.div
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}

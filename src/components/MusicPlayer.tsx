@@ -1,5 +1,4 @@
-import React, { useEffect, useRef } from 'react';
-import { Howl } from 'howler';
+import React from 'react';
 import { Music, Volume2, VolumeX, Play, Pause } from 'lucide-react';
 import { Theme } from '../types';
 import { THEMES, BACKGROUND_TRACKS } from '../constants';
@@ -20,45 +19,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   onVolumeChange,
   theme,
 }) => {
-  const soundRef = useRef<Howl | null>(null);
   const currentTheme = THEMES[theme];
-
-  useEffect(() => {
-    if (currentTrackId) {
-      const track = BACKGROUND_TRACKS.find(t => t.id === currentTrackId);
-      if (track) {
-        if (soundRef.current) {
-          soundRef.current.stop();
-          soundRef.current.unload();
-        }
-
-        soundRef.current = new Howl({
-          src: [track.url],
-          html5: true,
-          loop: true,
-          volume: volume,
-        });
-
-        soundRef.current.play();
-      }
-    } else {
-      if (soundRef.current) {
-        soundRef.current.stop();
-      }
-    }
-
-    return () => {
-      if (soundRef.current) {
-        soundRef.current.stop();
-      }
-    };
-  }, [currentTrackId]);
-
-  useEffect(() => {
-    if (soundRef.current) {
-      soundRef.current.volume(volume);
-    }
-  }, [volume]);
 
   const togglePlay = () => {
     if (!currentTrackId) {

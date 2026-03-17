@@ -12,6 +12,7 @@ interface PDFPageProps {
   brightness: number;
   contrast: number;
   theme: string;
+  isLandscape: boolean;
   onVisible: (pageNumber: number) => void;
 }
 
@@ -22,6 +23,7 @@ export const PDFPage = React.memo(({
   brightness,
   contrast,
   theme,
+  isLandscape,
   onVisible,
 }: PDFPageProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -91,19 +93,28 @@ export const PDFPage = React.memo(({
       try {
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale });
+        const pixelRatio = window.devicePixelRatio || 1;
+        // Clever technique: Render at 3x scale for high quality, even for low quality PDFs
+        const renderViewport = page.getViewport({ scale: scale * pixelRatio * 3 });
         
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d', { alpha: false }); // Optimization: no alpha
 
         if (!context) return;
 
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
+        // Enable high quality image smoothing
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
+
+        canvas.height = renderViewport.height;
+        canvas.width = renderViewport.width;
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
         canvas.className = "max-w-full h-auto block";
 
         const renderContext = {
           canvasContext: context,
-          viewport: viewport,
+          viewport: renderViewport,
         };
 
         const renderTask = page.render(renderContext as any);
@@ -141,8 +152,11 @@ export const PDFPage = React.memo(({
   return (
     <div 
       ref={containerRef} 
-      className="flex justify-center p-8 w-full"
-      style={{ minHeight: '800px' }}
+      className={cn(
+        "flex justify-center items-start w-full",
+        isLandscape ? "p-2" : "p-8"
+      )}
+      style={{ minHeight: isLandscape ? '400px' : '800px' }}
     >
       <div 
         className={cn(

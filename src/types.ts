@@ -20,14 +20,21 @@ export interface ReaderSettings {
   backgroundMusic: string | null;
   volume: number;
   brightness: number;
+  stats?: {
+    totalPagesRead: number;
+    unlockedAchievements: string[];
+  };
 }
 
 export interface BookMetadata {
   id: string;
   title: string;
+  originalName?: string;
   author?: string;
   totalPages: number;
   currentPage: number;
+  maxPageReached?: number;
   lastRead: number;
   bookmarks: Bookmark[];
+  coverImage?: string;
 }

@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "BookMetadata": {
+      "title": "BookMetadata",
+      "description": "Metadata for a PDF book",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "originalName": { "type": "string" },
+        "author": { "type": "string" },
+        "totalPages": { "type": "number" },
+        "currentPage": { "type": "number" },
+        "lastRead": { "type": "number" },
+        "bookmarks": {
+          "type": "array",
+          "items": { "$ref": "#/entities/Bookmark" }
+        },
+        "coverImage": { "type": "string" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "title", "totalPages", "currentPage", "lastRead", "uid"]
+    },
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "A bookmark in a PDF book",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pageNumber": { "type": "number" },
+        "label": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "pageNumber", "label", "timestamp"]
+    },
+    "ReaderSettings": {
+      "title": "ReaderSettings",
+      "description": "User settings for the PDF reader",
+      "type": "object",
+      "properties": {
+        "theme": { "type": "string" },
+        "viewMode": { "type": "string" },
+        "fontFamily": { "type": "string" },
+        "brightness": { "type": "number" },
+        "fontSize": { "type": "number" },
+        "lineHeight": { "type": "number" },
+        "isAutoScrolling": { "type": "boolean" },
+        "autoScrollSpeed": { "type": "number" },
+        "backgroundMusic": { "type": "string" },
+        "volume": { "type": "number" },
+        "uid": { "type": "string" }
+      },
+      "required": ["theme", "viewMode", "fontFamily", "brightness", "fontSize", "lineHeight", "isAutoScrolling", "autoScrollSpeed", "volume", "uid"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/books/{bookId}": {
+      "schema": { "$ref": "#/entities/BookMetadata" },
+      "description": "Books belonging to a user"
+    },
+    "/users/{userId}/settings/reader": {
+      "schema": { "$ref": "#/entities/ReaderSettings" },
+      "description": "Reader settings for a user"
+    }
+  }
+}

@@ -1,0 +1,123 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}/books
+    // Document ID: bookId
+    // Fields:
+    //   - id: string
+    //   - title: string
+    //   - originalName: string (optional)
+    //   - author: string (optional)
+    //   - totalPages: number
+    //   - currentPage: number
+    //   - lastRead: number
+    //   - bookmarks: list
+    //   - coverImage: string (optional)
+    //   - uid: string
+    //
+    // Collection: users/{userId}/settings
+    // Document ID: reader
+    // Fields:
+    //   - theme: string
+    //   - viewMode: string
+    //   - fontFamily: string
+    //   - brightness: number
+    //   - fontSize: number
+    //   - lineHeight: number
+    //   - isAutoScrolling: boolean
+    //   - autoScrollSpeed: number
+    //   - backgroundMusic: string (optional)
+    //   - volume: number
+    //   - uid: string
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    function isValidBookMetadata() {
+      return hasRequiredFields(['id', 'title', 'totalPages', 'currentPage', 'lastRead', 'uid']) &&
+             request.resource.data.id is string && request.resource.data.id.size() > 0 && request.resource.data.id.size() < 100 &&
+             request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() < 500 &&
+             isValidOptionalString('originalName', 0, 500) &&
+             isValidOptionalString('author', 0, 200) &&
+             request.resource.data.totalPages is number && request.resource.data.totalPages > 0 &&
+             request.resource.data.currentPage is number && request.resource.data.currentPage > 0 &&
+             request.resource.data.lastRead is number && request.resource.data.lastRead > 0 &&
+             request.resource.data.uid == request.auth.uid &&
+             (!( 'bookmarks' in request.resource.data ) || request.resource.data.bookmarks is list) &&
+             isValidOptionalString('coverImage', 0, 5000000); // Allow large base64 strings for cover images
+    }
+
+    function isValidReaderSettings() {
+      return hasRequiredFields(['theme', 'viewMode', 'fontFamily', 'brightness', 'fontSize', 'lineHeight', 'isAutoScrolling', 'autoScrollSpeed', 'volume', 'uid']) &&
+             request.resource.data.theme is string && request.resource.data.theme.size() > 0 && request.resource.data.theme.size() < 50 &&
+             request.resource.data.viewMode is string && request.resource.data.viewMode.size() > 0 && request.resource.data.viewMode.size() < 50 &&
+             request.resource.data.fontFamily is string && request.resource.data.fontFamily.size() > 0 && request.resource.data.fontFamily.size() < 50 &&
+             request.resource.data.brightness is number && request.resource.data.brightness >= 0 && request.resource.data.brightness <= 200 &&
+             request.resource.data.fontSize is number && request.resource.data.fontSize >= 8 && request.resource.data.fontSize <= 200 &&
+             request.resource.data.lineHeight is number && request.resource.data.lineHeight >= 1 && request.resource.data.lineHeight <= 5 &&
+             request.resource.data.isAutoScrolling is bool &&
+             request.resource.data.autoScrollSpeed is number && request.resource.data.autoScrollSpeed >= 0 && request.resource.data.autoScrollSpeed <= 10 &&
+             (!('backgroundMusic' in request.resource.data) || request.resource.data.backgroundMusic == null || (request.resource.data.backgroundMusic is string && request.resource.data.backgroundMusic.size() <= 100)) &&
+             request.resource.data.volume is number && request.resource.data.volume >= 0 && request.resource.data.volume <= 1 &&
+             request.resource.data.uid == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Users shouldn't write to the root user doc directly
+
+      match /books/{bookId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidBookMetadata() && uidUnchanged();
+        allow update: if isOwner(userId) && isValidBookMetadata() && uidNotModified();
+        allow delete: if isOwner(userId);
+      }
+
+      match /settings/{settingId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidReaderSettings() && uidUnchanged();
+        allow update: if isOwner(userId) && isValidReaderSettings() && uidNotModified();
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
