@@ -130,8 +130,8 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale });
       const pixelRatio = window.devicePixelRatio || 1;
-      // Clever technique: Render at 3x scale for high quality, even for low quality PDFs
-      const renderViewport = page.getViewport({ scale: scale * pixelRatio * 3 });
+      // Clever technique: Render at 2x scale for high quality (reduced from 3x to save memory)
+      const renderViewport = page.getViewport({ scale: scale * pixelRatio * 2 });
       
       const canvas = canvasElement;
       const context = canvas.getContext('2d');
@@ -144,8 +144,9 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
       canvas.height = renderViewport.height;
       canvas.width = renderViewport.width;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
+      canvas.style.width = '100%';
+      canvas.style.height = 'auto';
+      canvas.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
 
       const renderContext = {
         canvasContext: context,

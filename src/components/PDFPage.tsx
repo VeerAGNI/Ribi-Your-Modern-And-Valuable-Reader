@@ -4,6 +4,15 @@ import { cn } from '../utils';
 
 // Simple global cache for rendered pages to prevent re-rendering
 const pageCache = new Map<string, HTMLCanvasElement>();
+const MAX_CACHE_SIZE = 15; // Lowered to prevent OOM on mobile devices
+
+const addToCache = (key: string, canvas: HTMLCanvasElement) => {
+  if (pageCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = pageCache.keys().next().value;
+    if (firstKey) pageCache.delete(firstKey);
+  }
+  pageCache.set(key, canvas);
+};
 
 interface PDFPageProps {
   pdf: pdfjsLib.PDFDocumentProxy;
@@ -94,8 +103,8 @@ export const PDFPage = React.memo(({
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale });
         const pixelRatio = window.devicePixelRatio || 1;
-        // Clever technique: Render at 3x scale for high quality, even for low quality PDFs
-        const renderViewport = page.getViewport({ scale: scale * pixelRatio * 3 });
+        // Clever technique: Render at 2x scale for high quality (reduced from 3x to save memory)
+        const renderViewport = page.getViewport({ scale: scale * pixelRatio * 2 });
         
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d', { alpha: false }); // Optimization: no alpha
@@ -108,9 +117,10 @@ export const PDFPage = React.memo(({
 
         canvas.height = renderViewport.height;
         canvas.width = renderViewport.width;
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        canvas.className = "max-w-full h-auto block";
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
+        canvas.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
+        canvas.className = "max-w-full block object-contain";
 
         const renderContext = {
           canvasContext: context,
@@ -122,7 +132,7 @@ export const PDFPage = React.memo(({
         await renderTask.promise;
 
         // Save to cache
-        pageCache.set(cacheKey, canvas);
+        addToCache(cacheKey, canvas);
         
         if (canvasContainerRef.current) {
           canvasContainerRef.current.innerHTML = '';
