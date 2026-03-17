@@ -145,7 +145,8 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       canvas.height = renderViewport.height;
       canvas.width = renderViewport.width;
       canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
+      canvas.style.maxWidth = '100%';
+      canvas.style.height = 'auto';
 
       const renderContext = {
         canvasContext: context,
@@ -443,9 +444,10 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                 isLandscape ? "p-2" : "p-8"
               )}>
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.8, ease: "easeOut" }}
+                  key={currentPage}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
                   className="shadow-2xl rounded-sm overflow-hidden bg-white relative"
                   style={{ 
                     filter: getPdfFilter(),

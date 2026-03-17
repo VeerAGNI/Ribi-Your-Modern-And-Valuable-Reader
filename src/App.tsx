@@ -11,7 +11,7 @@ import { Book, Settings, Library as LibraryIcon, Bookmark as BookmarkIcon, Chevr
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { auth, db } from './firebase';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, getRedirectResult, User } from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import localforage from 'localforage';
 import { AchievementToast } from './components/AchievementToast';
@@ -83,6 +83,7 @@ export default function App() {
   const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_SETTINGS);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'library' | 'settings' | 'bookmarks' | 'about'>('library');
+  const [authError, setAuthError] = useState<string | null>(null);
   const soundRef = React.useRef<Howl | null>(null);
 
   // Background Music Logic
@@ -130,6 +131,20 @@ export default function App() {
       setAuthReady(true);
     });
     return () => unsubscribe();
+  }, []);
+
+  // Handle redirect result (for signInWithRedirect fallback)
+  useEffect(() => {
+    getRedirectResult(auth).then((result) => {
+      if (result) {
+        setAuthError(null);
+      }
+    }).catch((error: any) => {
+      console.error('Redirect auth error:', error);
+      if (error.code !== 'auth/popup-closed-by-user') {
+        setAuthError(error.message || 'Sign in failed. Please try again.');
+      }
+    });
   }, []);
 
   // Firestore Sync
@@ -396,7 +411,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthScreen />;
+    return <AuthScreen error={authError} />;
   }
 
   return (
