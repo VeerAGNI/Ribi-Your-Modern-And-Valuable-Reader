@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../firebase';
 import { BookOpen } from 'lucide-react';
 
@@ -8,8 +8,7 @@ export const AuthScreen: React.FC = () => {
   const handleLogin = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithRedirect(auth, provider);
+      await signInWithPopup(auth, provider);
     } catch (error) {
       console.error('Error signing in:', error);
     }

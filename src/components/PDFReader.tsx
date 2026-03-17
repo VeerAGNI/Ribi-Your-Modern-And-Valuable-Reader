@@ -428,7 +428,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                   <div
                     key={i + 1}
                     id={`pdf-page-${i + 1}`}
-                    className="w-full max-w-4xl"
+                    className="w-full max-w-5xl"
                   >
                     <PDFPage 
                       pdf={pdf}
