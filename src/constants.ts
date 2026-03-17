@@ -48,7 +48,10 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   stats: {
     totalPagesRead: 0,
     unlockedAchievements: [],
-  }
+    streak: 0,
+    longestStreak: 0,
+    lastReadDate: '',
+  },
 };
 
 export const ACHIEVEMENTS = [
@@ -71,6 +74,17 @@ export const ACHIEVEMENTS = [
   { id: 'a5000', pages: 5000, title: 'Walking Encyclopedia', icon: '🧠' },
   { id: 'a7500', pages: 7500, title: 'Ink Immortal', icon: '♾️' },
   { id: 'a10000', pages: 10000, title: 'The Grand Scholar', icon: '🎓' },
+];
+
+export const STREAK_ACHIEVEMENTS = [
+  { days: 2, title: 'Back Again', icon: '🔥' },
+  { days: 5, title: '5-Day Streak', icon: '🔥' },
+  { days: 7, title: 'Week Reader', icon: '🗓️' },
+  { days: 14, title: 'Two Weeks Strong', icon: '⚡' },
+  { days: 30, title: 'Monthly Habit', icon: '🏆' },
+  { days: 60, title: 'Reading Machine', icon: '🤖' },
+  { days: 100, title: 'Century Streak', icon: '💎' },
+  { days: 365, title: 'Year of Knowledge', icon: '👑' },
 ];
 
 export const FONT_FAMILIES: Record<string, string> = {

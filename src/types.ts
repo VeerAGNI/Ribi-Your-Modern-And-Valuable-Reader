@@ -9,6 +9,14 @@ export interface Bookmark {
   timestamp: number;
 }
 
+export interface ReadingStats {
+  totalPagesRead: number;
+  unlockedAchievements: string[];
+  streak: number;
+  longestStreak: number;
+  lastReadDate: string; // "YYYY-MM-DD"
+}
+
 export interface ReaderSettings {
   theme: Theme;
   viewMode: ViewMode;
@@ -21,10 +29,7 @@ export interface ReaderSettings {
   volume: number;
   brightness: number;
   renderQuality: number;
-  stats?: {
-    totalPagesRead: number;
-    unlockedAchievements: string[];
-  };
+  stats?: ReadingStats;
 }
 
 export interface BookMetadata {
