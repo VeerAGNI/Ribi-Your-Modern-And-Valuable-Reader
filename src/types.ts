@@ -20,6 +20,7 @@ export interface ReaderSettings {
   backgroundMusic: string | null;
   volume: number;
   brightness: number;
+  renderQuality: number;
   stats?: {
     totalPagesRead: number;
     unlockedAchievements: string[];

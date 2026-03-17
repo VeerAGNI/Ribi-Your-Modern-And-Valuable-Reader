@@ -1,13 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Bookmark, BookmarkCheck, ZoomIn, ZoomOut } from 'lucide-react';
-import { Theme, Bookmark as BookmarkType, ViewMode, FontFamily, ReaderSettings } from '../types';
-import { THEMES, FONT_FAMILIES } from '../constants';
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Bookmark, BookmarkCheck, ZoomIn, ZoomOut, AlertCircle } from 'lucide-react';
+import { Theme, Bookmark as BookmarkType, ViewMode, ReaderSettings } from '../types';
+import { THEMES } from '../constants';
 import { cn } from '../utils';
 import { PDFPage } from './PDFPage';
 
-// Set up worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 interface PDFReaderProps {
@@ -17,12 +16,13 @@ interface PDFReaderProps {
   onUpdate: (updates: Partial<ReaderSettings>) => void;
   theme: Theme;
   viewMode: ViewMode;
-  fontFamily: FontFamily;
+  fontFamily: string;
   brightness: number;
   fontSize: number;
   lineHeight: number;
   isAutoScrolling: boolean;
   autoScrollSpeed: number;
+  renderQuality: number;
   bookmarks: BookmarkType[];
   onToggleBookmark: (page: number) => void;
 }
@@ -31,98 +31,125 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   file,
   currentPage,
   onPageChange,
-  onUpdate,
   theme,
   viewMode,
-  fontFamily,
   brightness,
-  fontSize,
-  lineHeight,
   isAutoScrolling,
   autoScrollSpeed,
+  renderQuality,
   bookmarks,
   onToggleBookmark,
 }) => {
-  const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+  const pageChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const interactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<number>(0);
+
   const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [scale, setScale] = useState(1.5);
   const [isLandscape, setIsLandscape] = useState(window.innerWidth > window.innerHeight);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isUserInteracting, setIsUserInteracting] = useState(false);
-  const interactionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [scrollPercentage, setScrollPercentage] = useState(0);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const [pageInput, setPageInput] = useState<string | null>(null);
 
   const currentTheme = THEMES[theme];
+  const quality = Math.max(1, Math.min(4, renderQuality || 2));
 
-  // Optimize for landscape mode and responsive scaling
+  // Responsive scale on resize
   useEffect(() => {
-    const handleResize = () => {
+    const onResize = () => {
       const landscape = window.innerWidth > window.innerHeight;
       setIsLandscape(landscape);
-      
-      // Auto-adjust scale for better readability
-      // We use a slightly higher scale in landscape to fill the width
-      if (landscape) {
-        setScale(prev => (prev < 2.0 ? 2.2 : prev));
-      } else {
-        setScale(prev => (prev > 1.8 ? 1.5 : prev));
-      }
     };
-
-    window.addEventListener('resize', handleResize);
-    handleResize();
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Callback ref to handle canvas mounting
-  const canvasRef = useCallback((node: HTMLCanvasElement | null) => {
-    setCanvasElement(node);
-  }, []);
-
+  // Load PDF
   useEffect(() => {
-    const loadPdf = async () => {
+    let destroyed = false;
+    let objectUrl: string | null = null;
+
+    const load = async () => {
       setLoading(true);
-      try {
-        const url = typeof file === 'string' ? file : URL.createObjectURL(file);
-        const loadingTask = pdfjsLib.getDocument(url);
-        const pdfDoc = await loadingTask.promise;
-        setPdf(pdfDoc);
-        setNumPages(pdfDoc.numPages);
-      } catch (error) {
-        console.error('Error loading PDF:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+      setLoadError(null);
+      setPdf(null);
 
-    loadPdf();
-
-    return () => {
+      // Cancel any in-flight render
       if (renderTaskRef.current) {
         renderTaskRef.current.cancel();
+        renderTaskRef.current = null;
+      }
+
+      try {
+        if (typeof file === 'string' && file === '') {
+          setLoadError('No file provided.');
+          return;
+        }
+
+        const src = typeof file === 'string' ? file : (() => {
+          objectUrl = URL.createObjectURL(file as Blob);
+          return objectUrl;
+        })();
+
+        const loadingTask = pdfjsLib.getDocument({
+          url: src,
+          disableAutoFetch: false,
+          disableStream: false,
+          rangeChunkSize: 65536,
+          verbosity: 0,
+        });
+
+        const pdfDoc = await loadingTask.promise;
+        if (destroyed) { pdfDoc.destroy(); return; }
+
+        setPdf(pdfDoc);
+        setNumPages(pdfDoc.numPages);
+        setCanvasReady(false);
+      } catch (err: any) {
+        if (destroyed) return;
+        console.error('PDFReader: failed to load PDF', err);
+        if (err?.name === 'PasswordException') {
+          setLoadError('This PDF is password-protected.');
+        } else if (err?.message?.includes('Invalid PDF')) {
+          setLoadError('This file appears to be a corrupted or invalid PDF.');
+        } else {
+          setLoadError('Failed to load PDF. The file may be damaged or unsupported.');
+        }
+      } finally {
+        if (!destroyed) setLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      destroyed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (renderTaskRef.current) {
+        renderTaskRef.current.cancel();
+        renderTaskRef.current = null;
       }
     };
   }, [file]);
 
+  // Render single page (page mode) — uses imperative canvas ref
   const renderPage = useCallback(async (pageNum: number) => {
-    if (!pdf || !canvasElement || viewMode !== 'page') return;
+    const canvas = canvasRef.current;
+    if (!pdf || !canvas || viewMode !== 'page') return;
 
-    // Cancel and WAIT for any ongoing render task to finish/fail
+    // Cancel previous render
     if (renderTaskRef.current) {
-      try {
-        renderTaskRef.current.cancel();
-        // We await the promise to ensure the canvas is released
-        await renderTaskRef.current.promise;
-      } catch (error: any) {
-        // Ignore cancellation errors
-        if (error.name !== 'RenderingCancelledException') {
-          console.error('Error during task cancellation:', error);
-        }
-      }
+      renderTaskRef.current.cancel();
+      try { await renderTaskRef.current.promise; } catch { /* RenderingCancelledException expected */ }
       renderTaskRef.current = null;
     }
 
@@ -130,301 +157,311 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale });
       const pixelRatio = window.devicePixelRatio || 1;
-      // Clever technique: Render at 3x scale for high quality, even for low quality PDFs
-      const renderViewport = page.getViewport({ scale: scale * pixelRatio * 3 });
-      
-      const canvas = canvasElement;
-      const context = canvas.getContext('2d');
 
-      if (!context) return;
+      const maxDim = 12000;
+      const multiplier = Math.min(pixelRatio * quality, maxDim / Math.max(viewport.width, viewport.height));
+      const renderViewport = page.getViewport({ scale: scale * multiplier });
 
-      // Enable high quality image smoothing
-      context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = 'high';
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!ctx) return;
 
-      canvas.height = renderViewport.height;
+      ctx.imageSmoothingEnabled = quality >= 3 ? false : true;
+      ctx.imageSmoothingQuality = 'high';
+
       canvas.width = renderViewport.width;
+      canvas.height = renderViewport.height;
       canvas.style.width = `${viewport.width}px`;
       canvas.style.height = `${viewport.height}px`;
 
-      const renderContext = {
-        canvasContext: context,
-        viewport: renderViewport,
-      };
-
-      const renderTask = page.render(renderContext as any);
+      const renderTask = page.render({ canvasContext: ctx, viewport: renderViewport } as any);
       renderTaskRef.current = renderTask;
-
       await renderTask.promise;
-      
-      if (renderTaskRef.current === renderTask) {
-        renderTaskRef.current = null;
+      renderTaskRef.current = null;
+    } catch (err: any) {
+      if (err?.name !== 'RenderingCancelledException') {
+        console.error('PDFReader: render error', err);
       }
-    } catch (error: any) {
-      if (error.name === 'RenderingCancelledException') {
-        return;
-      }
-      console.error('Error rendering page:', error);
+      renderTaskRef.current = null;
     }
-  }, [pdf, scale, canvasElement, viewMode]);
+  }, [pdf, scale, viewMode, quality]);
 
+  // Re-render on page/scale/quality change
   useEffect(() => {
-    if (pdf && canvasElement && viewMode === 'page') {
+    if (pdf && canvasReady && viewMode === 'page') {
       renderPage(currentPage);
     }
-  }, [pdf, currentPage, renderPage, canvasElement, viewMode]);
+  }, [pdf, currentPage, renderPage, canvasReady, viewMode]);
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen();
-      setIsFullscreen(true);
+  // Canvas callback ref — triggers render once canvas is in DOM
+  const setCanvasRef = useCallback((node: HTMLCanvasElement | null) => {
+    canvasRef.current = node;
+    if (node) {
+      setCanvasReady(true);
     } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
+      setCanvasReady(false);
     }
-  };
+  }, []);
 
-  // Background pre-loader to cache all pages
-  useEffect(() => {
-    if (!pdf || loading) return;
-
-    const cacheAllPages = async () => {
-      for (let i = 1; i <= numPages; i++) {
-        try {
-          // Fetching the page triggers internal PDF.js caching
-          await pdf.getPage(i);
-          // Small delay to keep UI responsive
-          if (i % 5 === 0) await new Promise(resolve => setTimeout(resolve, 100));
-        } catch (e) {
-          console.warn(`Failed to pre-cache page ${i}`);
-        }
-      }
-    };
-
-    cacheAllPages();
-  }, [pdf, loading, numPages]);
-
-  const isBookmarked = bookmarks.some(b => b.pageNumber === currentPage);
-
-  // Theme-aware PDF filters
-  const getPdfFilter = () => {
-    let filter = `brightness(${brightness}%) contrast(100%)`;
-    if (theme === 'dark' || theme === 'midnight' || theme === 'nord') {
-      filter += ' invert(90%) hue-rotate(180deg)';
-    } else if (theme === 'sepia') {
-      filter += ' sepia(40%) brightness(102%)';
+  // Fullscreen
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
     }
-    return filter;
-  };
+  }, []);
 
-  const [scrollPercentage, setScrollPercentage] = useState(0);
-
-  // Track current page and percentage based on scroll position
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || !pdf) return;
+    const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
 
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = viewport;
-      const totalScrollable = scrollHeight - clientHeight;
-      const percentage = totalScrollable > 0 ? Math.round((scrollTop / totalScrollable) * 100) : 0;
-      setScrollPercentage(percentage);
+  // PDF filter (theme + quality sharpness boost)
+  const getPdfFilter = useCallback(() => {
+    let f = `brightness(${brightness}%)`;
+    if (quality >= 3) f += ' contrast(108%) saturate(104%)';
+    if (theme === 'dark' || theme === 'midnight' || theme === 'nord') f += ' invert(90%) hue-rotate(180deg)';
+    else if (theme === 'sepia') f += ' sepia(40%)';
+    return f;
+  }, [brightness, theme, quality]);
 
-      if (viewMode === 'continuous') {
-        const estimatedPage = Math.max(1, Math.min(numPages, Math.ceil((scrollTop / scrollHeight) * numPages) + 1));
-        // We don't call onPageChange here to avoid infinite loops, 
-        // but we could if we check if it's different enough.
-      }
-    };
-
-    viewport.addEventListener('scroll', handleScroll, { passive: true });
-    // Initial calculation
-    handleScroll();
-    
-    return () => viewport.removeEventListener('scroll', handleScroll);
-  }, [viewMode, pdf, numPages, currentPage]);
-
-  // Handle user interaction to pause auto-scroll
-  const handleInteraction = useCallback(() => {
-    if (!isAutoScrolling) return;
-    
-    setIsUserInteracting(true);
-    
-    if (interactionTimeoutRef.current) {
-      clearTimeout(interactionTimeoutRef.current);
-    }
-    
-    interactionTimeoutRef.current = setTimeout(() => {
-      setIsUserInteracting(false);
-    }, 2000); // Resume after 2 seconds of no interaction
-  }, [isAutoScrolling]);
-
-  // Smoother auto-scroll using requestAnimationFrame
+  // Scroll percentage
   useEffect(() => {
-    if (!isAutoScrolling || autoScrollSpeed === 0 || !viewportRef.current || isUserInteracting) return;
-
-    let rafId: number;
-    const scroll = () => {
-      if (viewportRef.current && !isUserInteracting) {
-        // Slowed down speed: speed 1 = 0.5px per frame
-        const speedMultiplier = 0.5;
-        viewportRef.current.scrollTop += autoScrollSpeed * speedMultiplier;
-
-        if (viewMode === 'page') {
-          const { scrollTop, scrollHeight, clientHeight } = viewportRef.current;
-          if (scrollTop + clientHeight >= scrollHeight - 2) {
-            if (currentPage < numPages) {
-              onPageChange(currentPage + 1);
-              viewportRef.current.scrollTop = 0;
-            }
-          }
-        }
-      }
-      rafId = requestAnimationFrame(scroll);
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = vp;
+      const total = scrollHeight - clientHeight;
+      setScrollPercentage(total > 0 ? Math.round((scrollTop / total) * 100) : 0);
     };
+    vp.addEventListener('scroll', onScroll, { passive: true });
+    return () => vp.removeEventListener('scroll', onScroll);
+  }, []);
 
-    rafId = requestAnimationFrame(scroll);
-    return () => cancelAnimationFrame(rafId);
-  }, [isAutoScrolling, autoScrollSpeed, currentPage, numPages, onPageChange, viewMode, isUserInteracting]);
-
-  // Track current page based on scroll position in continuous mode
+  // Page tracking in continuous mode (debounced)
   useEffect(() => {
     if (viewMode !== 'continuous' || !viewportRef.current || !pdf) return;
 
-    const handleScroll = () => {
-      if (!viewportRef.current) return;
-      
-      const { scrollTop, clientHeight } = viewportRef.current;
-      const scrollCenter = scrollTop + clientHeight / 2;
-      
-      // Find the page that is currently at the center of the viewport
-      const pageElements = Array.from({ length: numPages }, (_, i) => 
-        document.getElementById(`pdf-page-${i + 1}`)
-      );
-      
-      let closestPage = 1;
-      let minDistance = Infinity;
-      
-      pageElements.forEach((el, index) => {
-        if (el) {
-          const distance = Math.abs(el.offsetTop + el.offsetHeight / 2 - scrollCenter);
-          if (distance < minDistance) {
-            minDistance = distance;
-            closestPage = index + 1;
+    const onScroll = () => {
+      if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
+      pageChangeDebounceRef.current = setTimeout(() => {
+        const vp = viewportRef.current;
+        if (!vp) return;
+        const center = vp.scrollTop + vp.clientHeight / 2;
+
+        let closest = 1;
+        let minDist = Infinity;
+        for (let i = 1; i <= numPages; i++) {
+          const el = document.getElementById(`pdf-page-${i}`);
+          if (el) {
+            const dist = Math.abs(el.offsetTop + el.offsetHeight / 2 - center);
+            if (dist < minDist) { minDist = dist; closest = i; }
           }
         }
-      });
-      
-      if (closestPage !== currentPage) {
-        onPageChange(closestPage);
-      }
+        if (closest !== currentPage) onPageChange(closest);
+      }, 100);
     };
 
-    const viewport = viewportRef.current;
-    viewport.addEventListener('scroll', handleScroll, { passive: true });
-    return () => viewport.removeEventListener('scroll', handleScroll);
+    const vp = viewportRef.current;
+    vp.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      vp.removeEventListener('scroll', onScroll);
+      if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
+    };
   }, [viewMode, pdf, numPages, currentPage, onPageChange]);
 
-  // Handle page navigation
-  const handlePageNavigation = (newPage: number) => {
-    if (newPage < 1 || newPage > numPages) return;
-    
+  // User interaction pause for auto-scroll
+  const handleInteraction = useCallback(() => {
+    if (!isAutoScrolling) return;
+    setIsUserInteracting(true);
+    if (interactionTimeoutRef.current) clearTimeout(interactionTimeoutRef.current);
+    interactionTimeoutRef.current = setTimeout(() => setIsUserInteracting(false), 2000);
+  }, [isAutoScrolling]);
+
+  // Auto-scroll via RAF
+  useEffect(() => {
+    if (!isAutoScrolling || autoScrollSpeed === 0 || isUserInteracting) {
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
+
+    const scroll = () => {
+      const vp = viewportRef.current;
+      if (vp && !isUserInteracting) {
+        vp.scrollTop += autoScrollSpeed * 0.4;
+        if (viewMode === 'page') {
+          const { scrollTop, scrollHeight, clientHeight } = vp;
+          if (scrollTop + clientHeight >= scrollHeight - 2 && currentPage < numPages) {
+            onPageChange(currentPage + 1);
+            vp.scrollTop = 0;
+          }
+        }
+      }
+      rafRef.current = requestAnimationFrame(scroll);
+    };
+    rafRef.current = requestAnimationFrame(scroll);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isAutoScrolling, autoScrollSpeed, currentPage, numPages, onPageChange, viewMode, isUserInteracting]);
+
+  // Navigation
+  const navigate = useCallback((page: number) => {
+    const clamped = Math.max(1, Math.min(numPages, page));
     if (viewMode === 'continuous') {
-      const pageElement = document.getElementById(`pdf-page-${newPage}`);
-      if (pageElement && viewportRef.current) {
-        viewportRef.current.scrollTo({
-          top: pageElement.offsetTop,
-          behavior: 'smooth'
-        });
+      const el = document.getElementById(`pdf-page-${clamped}`);
+      if (el && viewportRef.current) {
+        viewportRef.current.scrollTo({ top: el.offsetTop, behavior: 'smooth' });
       }
     } else {
-      onPageChange(newPage);
-      if (viewportRef.current) {
-        viewportRef.current.scrollTop = 0;
-      }
+      onPageChange(clamped);
+      if (viewportRef.current) viewportRef.current.scrollTop = 0;
     }
-  };
+  }, [numPages, viewMode, onPageChange]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') navigate(currentPage + 1);
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') navigate(currentPage - 1);
+      else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [currentPage, navigate, toggleFullscreen]);
+
+  const isBookmarked = bookmarks.some(b => b.pageNumber === currentPage);
+  const progress = numPages > 0 ? Math.round((currentPage / numPages) * 100) : 0;
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className={cn(
-        "relative flex flex-col items-center w-full h-full overflow-hidden transition-colors duration-700",
-        theme === 'sepia' && "sepia-texture",
-        (theme === 'dark' || theme === 'nord') && "dark-texture",
-        theme === 'midnight' && "midnight-texture",
-        "paper-texture"
+        'relative flex flex-col w-full h-full overflow-hidden transition-colors duration-500',
+        theme === 'sepia' && 'sepia-texture',
+        (theme === 'dark' || theme === 'nord') && 'dark-texture',
+        theme === 'midnight' && 'midnight-texture',
+        'paper-texture'
       )}
-      style={{ 
-        backgroundColor: currentTheme.bg,
-      }}
+      style={{ backgroundColor: currentTheme.bg }}
     >
-      {loading ? (
-        <div className="flex items-center justify-center h-full">
-          <div className="w-12 h-12 border-4 border-blue-500 rounded-full border-t-transparent animate-spin" />
+      {/* Loading state */}
+      {loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 gap-4"
+          style={{ background: currentTheme.bg }}>
+          <div className="w-12 h-12 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"
+            style={{ borderWidth: 3 }} />
+          <p className="text-sm opacity-40" style={{ color: currentTheme.text }}>Loading PDF…</p>
         </div>
-      ) : (
+      )}
+
+      {/* Error state */}
+      {loadError && !loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 gap-4 p-8 text-center"
+          style={{ background: currentTheme.bg }}>
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+            style={{ background: 'rgba(239,68,68,0.1)' }}>
+            <AlertCircle size={32} className="text-red-500" />
+          </div>
+          <div>
+            <p className="font-bold text-lg mb-2" style={{ color: currentTheme.text }}>Unable to Open PDF</p>
+            <p className="text-sm opacity-50 max-w-xs" style={{ color: currentTheme.text }}>{loadError}</p>
+          </div>
+        </div>
+      )}
+
+      {!loading && !loadError && pdf && (
         <>
-          {/* Top Bar Overlay */}
-          <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between p-4 bg-gradient-to-b from-black/20 to-transparent opacity-0 hover:opacity-100 transition-opacity">
-            <div className="text-sm font-medium" style={{ color: currentTheme.text }}>
-              Page {currentPage} of {numPages}
-            </div>
-            <div className="flex gap-2 items-center">
-              <div className="flex items-center bg-black/10 rounded-full px-2 mr-2">
-                <button 
-                  onClick={() => setScale(prev => Math.max(0.5, prev - 0.2))}
-                  className="p-2 rounded-full hover:bg-black/10 transition-colors"
-                  style={{ color: currentTheme.text }}
-                  title="Zoom Out"
+          {/* Top HUD — hover to reveal */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            whileHover={{ opacity: 1 }}
+            className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-5 py-4 pointer-events-none"
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, transparent 100%)' }}
+          >
+            {/* Page info */}
+            <div className="pointer-events-auto">
+              {pageInput !== null ? (
+                <input
+                  type="number"
+                  min={1}
+                  max={numPages}
+                  value={pageInput}
+                  autoFocus
+                  className="w-20 text-center text-sm font-mono text-white bg-black/40 border border-white/20 rounded-lg px-2 py-1 focus:outline-none"
+                  onChange={e => setPageInput(e.target.value)}
+                  onBlur={() => {
+                    const p = parseInt(pageInput);
+                    if (!isNaN(p)) navigate(p);
+                    setPageInput(null);
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }
+                    if (e.key === 'Escape') setPageInput(null);
+                  }}
+                />
+              ) : (
+                <button
+                  onClick={() => setPageInput(String(currentPage))}
+                  className="text-sm font-medium text-white/80 hover:text-white transition-colors font-mono"
                 >
-                  <ZoomOut size={18} />
+                  {currentPage} / {numPages}
                 </button>
-                <span className="text-xs font-mono w-12 text-center" style={{ color: currentTheme.text }}>
-                  {Math.round(scale * 100)}%
-                </span>
-                <button 
-                  onClick={() => setScale(prev => Math.min(4, prev + 0.2))}
-                  className="p-2 rounded-full hover:bg-black/10 transition-colors"
-                  style={{ color: currentTheme.text }}
-                  title="Zoom In"
-                >
-                  <ZoomIn size={18} />
+              )}
+            </div>
+
+            {/* Controls */}
+            <div className="flex items-center gap-1.5 pointer-events-auto">
+              {/* Zoom */}
+              <div className="flex items-center bg-black/25 backdrop-blur-md rounded-full px-2 border border-white/10">
+                <button onClick={() => setScale(s => Math.max(0.5, parseFloat((s - 0.2).toFixed(1))))}
+                  className="p-2 text-white/80 hover:text-white transition-colors" title="Zoom Out">
+                  <ZoomOut size={16} />
+                </button>
+                <span className="text-xs font-mono w-11 text-center text-white/70">{Math.round(scale * 100)}%</span>
+                <button onClick={() => setScale(s => Math.min(5, parseFloat((s + 0.2).toFixed(1))))}
+                  className="p-2 text-white/80 hover:text-white transition-colors" title="Zoom In">
+                  <ZoomIn size={16} />
                 </button>
               </div>
-              <button 
+
+              {/* Bookmark */}
+              <button
                 onClick={() => onToggleBookmark(currentPage)}
-                className="p-2 rounded-full hover:bg-black/10 transition-colors"
-                style={{ color: isBookmarked ? currentTheme.accent : currentTheme.text }}
+                className="p-2 rounded-full transition-all"
+                style={{ color: isBookmarked ? '#F59E0B' : 'rgba(255,255,255,0.7)', background: isBookmarked ? 'rgba(245,158,11,0.15)' : 'rgba(0,0,0,0.2)' }}
               >
-                {isBookmarked ? <BookmarkCheck size={20} /> : <Bookmark size={20} />}
+                {isBookmarked ? <BookmarkCheck size={18} /> : <Bookmark size={18} />}
               </button>
-              <button 
-                onClick={toggleFullscreen}
-                className="p-2 rounded-full hover:bg-black/10 transition-colors"
-                style={{ color: currentTheme.text }}
-              >
-                {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+
+              {/* Fullscreen */}
+              <button onClick={toggleFullscreen}
+                className="p-2 rounded-full bg-black/20 text-white/70 hover:text-white transition-all">
+                {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
               </button>
             </div>
+          </motion.div>
+
+          {/* Progress bar */}
+          <div className="absolute top-0 left-0 right-0 h-0.5 z-30" style={{ background: 'rgba(255,255,255,0.05)' }}>
+            <div className="h-full transition-all duration-300" style={{ width: `${progress}%`, background: currentTheme.accent }} />
           </div>
 
-          {/* Reader Viewport */}
-          <div 
+          {/* Reader viewport */}
+          <div
             ref={viewportRef}
-            className="flex-1 w-full overflow-y-auto custom-scrollbar" 
-            id="reader-viewport" 
+            className="flex-1 w-full overflow-y-auto custom-scrollbar"
             style={{ scrollBehavior: isAutoScrolling ? 'auto' : 'smooth' }}
             onMouseDown={handleInteraction}
             onTouchStart={handleInteraction}
             onTouchMove={handleInteraction}
             onWheel={handleInteraction}
           >
-            {viewMode === 'continuous' && pdf ? (
-              <div className="flex flex-col items-center py-8">
+            {viewMode === 'continuous' ? (
+              <div className="flex flex-col items-center py-6">
                 {Array.from({ length: numPages }, (_, i) => (
-                  <div key={i + 1} id={`pdf-page-${i + 1}`}>
-                    <PDFPage 
+                  <div key={i + 1} id={`pdf-page-${i + 1}`} className="w-full">
+                    <PDFPage
                       pdf={pdf}
                       pageNumber={i + 1}
                       scale={scale}
@@ -432,50 +469,67 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                       contrast={100}
                       theme={theme}
                       isLandscape={isLandscape}
+                      renderQuality={quality}
                       onVisible={() => {}}
                     />
                   </div>
                 ))}
               </div>
             ) : (
-              <div className={cn(
-                "flex justify-center items-start min-h-full",
-                isLandscape ? "p-2" : "p-8"
-              )}>
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.8, ease: "easeOut" }}
-                  className="shadow-2xl rounded-sm overflow-hidden bg-white relative"
-                  style={{ 
-                    filter: getPdfFilter(),
-                    boxShadow: theme === 'sepia' ? '0 25px 50px -12px rgba(91, 70, 54, 0.25)' : '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
-                  }}
-                >
-                  <canvas ref={canvasRef} className="max-w-full h-auto block" />
-                </motion.div>
+              <div className={cn('flex justify-center items-start min-h-full', isLandscape ? 'p-2' : 'p-6 sm:p-10')}>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={currentPage}
+                    initial={{ opacity: 0, scale: 0.97 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.97 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    className="shadow-2xl rounded-sm overflow-hidden bg-white relative"
+                    style={{
+                      filter: getPdfFilter(),
+                      boxShadow: theme === 'sepia'
+                        ? '0 24px 48px -10px rgba(91,70,54,0.3)'
+                        : '0 24px 56px -12px rgba(0,0,0,0.55)',
+                    }}
+                  >
+                    <canvas ref={setCanvasRef} className="max-w-full h-auto block" />
+                    {!canvasReady && (
+                      <div className="w-64 h-96 flex items-center justify-center">
+                        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
               </div>
             )}
           </div>
 
-          {/* Navigation Controls */}
-          <div className="absolute bottom-8 left-0 right-0 flex justify-center items-center gap-8 z-10 pointer-events-none">
+          {/* Bottom navigation */}
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center items-center gap-5 z-10 pointer-events-none">
             <button
               disabled={currentPage <= 1}
-              onClick={() => handlePageNavigation(currentPage - 1)}
-              className="p-4 rounded-full bg-black/10 backdrop-blur-md text-white hover:bg-black/20 transition-all pointer-events-auto disabled:opacity-30"
+              onClick={() => navigate(currentPage - 1)}
+              className="p-3.5 rounded-full backdrop-blur-md text-white transition-all pointer-events-auto disabled:opacity-25 active:scale-90"
+              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)' }}
             >
-              <ChevronLeft size={24} />
+              <ChevronLeft size={22} />
             </button>
-            <div className="px-6 py-2 rounded-full bg-black/10 backdrop-blur-md text-white font-mono text-sm pointer-events-auto">
-              {viewMode === 'continuous' ? `${scrollPercentage}%` : `${Math.round((currentPage / numPages) * 100)}%`}
+
+            <div
+              className="px-5 py-2 rounded-full backdrop-blur-md text-white font-mono text-xs font-medium pointer-events-auto cursor-pointer"
+              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)' }}
+              onClick={() => setPageInput(String(currentPage))}
+            >
+              {viewMode === 'continuous' ? `${scrollPercentage}%` : `${progress}%`}
             </div>
+
             <button
               disabled={currentPage >= numPages}
-              onClick={() => handlePageNavigation(currentPage + 1)}
-              className="p-4 rounded-full bg-black/10 backdrop-blur-md text-white hover:bg-black/20 transition-all pointer-events-auto disabled:opacity-30"
+              onClick={() => navigate(currentPage + 1)}
+              className="p-3.5 rounded-full backdrop-blur-md text-white transition-all pointer-events-auto disabled:opacity-25 active:scale-90"
+              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)' }}
             >
-              <ChevronRight size={24} />
+              <ChevronRight size={22} />
             </button>
           </div>
         </>
