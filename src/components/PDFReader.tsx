@@ -67,9 +67,9 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       // Auto-adjust scale for better readability
       // We use a slightly higher scale in landscape to fill the width
       if (landscape) {
-        setScale(prev => (prev < 2.0 ? 2.2 : prev));
+        setScale(prev => (prev < 1.0 ? 1.2 : prev));
       } else {
-        setScale(prev => (prev > 1.8 ? 1.5 : prev));
+        setScale(prev => (prev > 1.2 ? 1.0 : prev));
       }
     };
 
@@ -130,17 +130,18 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale });
       const pixelRatio = window.devicePixelRatio || 1;
-      // Clever technique: Render at 2x scale for high quality (reduced from 3x to save memory)
-      const renderViewport = page.getViewport({ scale: scale * pixelRatio * 2 });
+      // Optimized: Render at max 2x scale for quality without excessive memory
+      const renderScale = scale * Math.min(pixelRatio, 1.5);
+      const renderViewport = page.getViewport({ scale: renderScale });
       
       const canvas = canvasElement;
       const context = canvas.getContext('2d');
 
       if (!context) return;
 
-      // Enable high quality image smoothing
+      // Enable medium quality image smoothing for better performance
       context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = 'high';
+      context.imageSmoothingQuality = 'medium';
 
       canvas.height = renderViewport.height;
       canvas.width = renderViewport.width;
@@ -422,9 +423,13 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             onWheel={handleInteraction}
           >
             {viewMode === 'continuous' && pdf ? (
-              <div className="flex flex-col items-center py-8">
+              <div className="flex flex-col items-center py-2">
                 {Array.from({ length: numPages }, (_, i) => (
-                  <div key={i + 1} id={`pdf-page-${i + 1}`}>
+                  <div
+                    key={i + 1}
+                    id={`pdf-page-${i + 1}`}
+                    className="w-full max-w-4xl"
+                  >
                     <PDFPage 
                       pdf={pdf}
                       pageNumber={i + 1}
@@ -441,7 +446,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             ) : (
               <div className={cn(
                 "flex justify-center items-start min-h-full",
-                isLandscape ? "p-2" : "p-8"
+                isLandscape ? "p-2" : "p-4"
               )}>
                 <motion.div
                   initial={{ opacity: 0, scale: 0.98 }}

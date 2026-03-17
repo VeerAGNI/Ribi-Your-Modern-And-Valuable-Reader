@@ -40,9 +40,28 @@ export const PDFPage = React.memo(({
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const [isRendered, setIsRendered] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<number>(isLandscape ? 1.414 : 0.707);
 
   // Unique key for caching this specific page at this scale
   const cacheKey = useMemo(() => `${(pdf as any).fingerprints?.[0] || 'no-fingerprint'}-${pageNumber}-${scale}`, [pdf, pageNumber, scale]);
+
+  // Fetch aspect ratio early to prevent layout shifts
+  useEffect(() => {
+    let active = true;
+    const getRatio = async () => {
+      try {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1 });
+        if (active) {
+          setAspectRatio(viewport.width / viewport.height);
+        }
+      } catch (e) {
+        console.warn("Failed to get aspect ratio", e);
+      }
+    };
+    getRatio();
+    return () => { active = false; };
+  }, [pdf, pageNumber]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -56,7 +75,7 @@ export const PDFPage = React.memo(({
       },
       { 
         threshold: 0,
-        rootMargin: '2000px 0px' // Pre-load pages 2000px above and below viewport
+        rootMargin: '800px 0px' // Pre-load pages 800px above and below viewport
       }
     );
 
@@ -67,24 +86,10 @@ export const PDFPage = React.memo(({
     return () => observer.disconnect();
   }, [pageNumber, onVisible]);
 
-  const [shouldRender, setShouldRender] = useState(false);
-
-  useEffect(() => {
-    if (isVisible) {
-      setShouldRender(true);
-    } else if (!isRendered) {
-      // Staggered background rendering
-      const timer = setTimeout(() => {
-        setShouldRender(true);
-      }, pageNumber * 50);
-      return () => clearTimeout(timer);
-    }
-  }, [isVisible, isRendered, pageNumber]);
-
   useEffect(() => {
     const renderPage = async () => {
       // If already rendered or cached, just attach it
-      if (isRendered || !canvasContainerRef.current || !pdf || !shouldRender) return;
+      if (isRendered || !canvasContainerRef.current || !pdf || !isVisible) return;
 
       // Check cache first
       const cachedCanvas = pageCache.get(cacheKey);
@@ -103,8 +108,9 @@ export const PDFPage = React.memo(({
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale });
         const pixelRatio = window.devicePixelRatio || 1;
-        // Clever technique: Render at 2x scale for high quality (reduced from 3x to save memory)
-        const renderViewport = page.getViewport({ scale: scale * pixelRatio * 2 });
+        // Optimized: Render at max 2x scale for quality without excessive memory
+        const renderScale = scale * Math.min(pixelRatio, 1.5);
+        const renderViewport = page.getViewport({ scale: renderScale });
         
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d', { alpha: false }); // Optimization: no alpha
@@ -113,7 +119,7 @@ export const PDFPage = React.memo(({
 
         // Enable high quality image smoothing
         context.imageSmoothingEnabled = true;
-        context.imageSmoothingQuality = 'high';
+        context.imageSmoothingQuality = 'medium'; // Faster than high
 
         canvas.height = renderViewport.height;
         canvas.width = renderViewport.width;
@@ -147,7 +153,7 @@ export const PDFPage = React.memo(({
     };
 
     renderPage();
-  }, [pdf, pageNumber, scale, isRendered, cacheKey, shouldRender]);
+  }, [pdf, pageNumber, scale, isRendered, cacheKey, isVisible]);
 
   const getPdfFilter = () => {
     let filter = `brightness(${brightness}%) contrast(${contrast}%)`;
@@ -164,13 +170,16 @@ export const PDFPage = React.memo(({
       ref={containerRef} 
       className={cn(
         "flex justify-center items-start w-full",
-        isLandscape ? "p-2" : "p-8"
+        isLandscape ? "py-1 px-2" : "py-2 px-4"
       )}
-      style={{ minHeight: isLandscape ? '400px' : '800px' }}
+      style={{
+        aspectRatio: `${aspectRatio}`,
+        minHeight: '200px'
+      }}
     >
       <div 
         className={cn(
-          "shadow-2xl bg-white overflow-hidden rounded-sm transition-transform duration-500 relative",
+          "shadow-2xl bg-white overflow-hidden rounded-sm transition-transform duration-500 relative w-full h-full",
           theme === 'sepia' && "sepia-texture",
           (theme === 'dark' || theme === 'nord') && "dark-texture",
           theme === 'midnight' && "midnight-texture",
