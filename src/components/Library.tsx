@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Book as BookIcon, Clock, Trash2, FileText, X, Plus } from 'lucide-react';
+import { Upload, Book as BookIcon, Clock, Trash2, FileText, X, Plus, AlertCircle, CheckCircle2, Edit2 } from 'lucide-react';
 import { BookMetadata, Theme } from '../types';
-import { THEMES } from '../constants';
+import { THEMES, MAX_PDF_SIZE_BYTES, MAX_PDF_SIZE_MB } from '../constants';
 import { cn, formatTime } from '../utils';
+import * as pdfjsLib from 'pdfjs-dist';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 interface LibraryProps {
   books: BookMetadata[];
@@ -17,14 +20,18 @@ export const Library: React.FC<LibraryProps> = ({ books, onUpload, onSelect, onD
   const [showTip, setShowTip] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [customBookName, setCustomBookName] = useState('');
+  const [bookName, setBookName] = useState('');
+  const [extractingMeta, setExtractingMeta] = useState(false);
+  const [metaExtracted, setMetaExtracted] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleteModalBook, setDeleteModalBook] = useState<BookMetadata | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const hasSeenTip = localStorage.getItem('veuros_seen_tip');
-    if (!hasSeenTip) {
-      setShowTip(true);
-    }
+    if (!hasSeenTip) setShowTip(true);
   }, []);
 
   const dismissTip = () => {
@@ -32,149 +39,310 @@ export const Library: React.FC<LibraryProps> = ({ books, onUpload, onSelect, onD
     setShowTip(false);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const extractPdfTitle = async (file: File): Promise<string> => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, verbosity: 0 } as any);
+      const pdf = await loadingTask.promise;
+      const metadata = await pdf.getMetadata().catch(() => null);
+      pdf.destroy();
+      const info = (metadata?.info as any) || {};
+      const title = info?.Title?.trim();
+      if (title && title.length > 1 && title.toLowerCase() !== 'untitled') return title;
+    } catch { /* fall through */ }
+    return file.name.replace(/\.pdf$/i, '').trim() || 'Untitled PDF';
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type === 'application/pdf') {
-      setSelectedFile(file);
-      setCustomBookName(''); // Leave empty to allow auto-extraction from metadata
-    }
+    setUploadError(null);
+    if (!file) return;
+    if (file.type !== 'application/pdf') { setUploadError('Please select a valid PDF file.'); return; }
+    if (file.size > MAX_PDF_SIZE_BYTES) { setUploadError(`File too large. Maximum allowed size is ${MAX_PDF_SIZE_MB} MB.`); return; }
+
+    setSelectedFile(file);
+    setMetaExtracted(false);
+    setExtractingMeta(true);
+    setBookName('');
+    const title = await extractPdfTitle(file);
+    setBookName(title);
+    setMetaExtracted(true);
+    setExtractingMeta(false);
   };
 
   const handleConfirmUpload = () => {
     if (selectedFile) {
-      onUpload(selectedFile, customBookName.trim() || undefined);
-      setIsUploadModalOpen(false);
-      setSelectedFile(null);
-      setCustomBookName('');
+      onUpload(selectedFile, bookName.trim() || undefined);
+      resetModal();
     }
   };
 
-  const handleCancelUpload = () => {
+  const resetModal = () => {
     setIsUploadModalOpen(false);
     setSelectedFile(null);
-    setCustomBookName('');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    setBookName('');
+    setUploadError(null);
+    setMetaExtracted(false);
+    setExtractingMeta(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, book: BookMetadata) => {
+    e.stopPropagation();
+    setDeleteModalBook(book);
+  };
+
+  const confirmDelete = () => {
+    if (deleteModalBook) {
+      onDelete(deleteModalBook.id);
+      setDeleteModalBook(null);
     }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   return (
     <div className="flex flex-col h-full p-6 relative">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-3xl font-bold tracking-tight" style={{ color: currentTheme.text }}>Ribi</h1>
-          <p className="text-sm opacity-50" style={{ color: currentTheme.text }}>Continue Reading & Becoming</p>
+          <p className="text-xs opacity-40 mt-0.5" style={{ color: currentTheme.text }}>Continue Reading & Becoming</p>
+        </div>
+        <div className="text-xs opacity-30 font-mono" style={{ color: currentTheme.text }}>
+          {books.length} book{books.length !== 1 ? 's' : ''}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar mb-4">
+      {/* Book list */}
+      <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar mb-4 space-y-3">
         {books.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-3xl opacity-30" style={{ borderColor: currentTheme.text }}>
-            <BookIcon size={48} style={{ color: currentTheme.text }} />
-            <p className="mt-4 font-medium" style={{ color: currentTheme.text }}>Your library is empty</p>
+          <div className="flex flex-col items-center justify-center h-56 border-2 border-dashed rounded-3xl"
+            style={{ borderColor: `${currentTheme.text}25` }}>
+            <BookIcon size={40} style={{ color: currentTheme.text, opacity: 0.2 }} />
+            <p className="mt-3 text-sm font-medium opacity-25" style={{ color: currentTheme.text }}>Your library is empty</p>
+            <p className="text-xs opacity-20 mt-1" style={{ color: currentTheme.text }}>Tap + to add your first book</p>
           </div>
         ) : (
-          <div className="grid gap-4">
-            {books.sort((a, b) => b.lastRead - a.lastRead).map(book => (
-              <div 
-                key={book.id}
-                onClick={() => onSelect(book.id)}
-                className="group relative flex items-center gap-4 p-4 rounded-2xl cursor-pointer transition-all hover:scale-[1.02]"
-                style={{ backgroundColor: currentTheme.secondary }}
-              >
-                <div className="w-12 h-16 bg-blue-500/10 rounded-lg flex items-center justify-center text-blue-500 overflow-hidden shrink-0">
-                  {book.coverImage ? (
-                    <img src={book.coverImage} alt="Cover" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <FileText size={24} />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold truncate" style={{ color: currentTheme.text }}>{book.title}</h3>
-                  <div className="flex items-center gap-3 mt-1 opacity-50 text-[10px]" style={{ color: currentTheme.text }}>
-                    <span className="flex items-center gap-1">
-                      <Clock size={10} />
-                      {formatTime(book.lastRead)}
-                    </span>
-                    <span>Page {book.currentPage} / {book.totalPages}</span>
-                  </div>
-                </div>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(book.id);
-                  }}
-                  className="p-2 rounded-full opacity-50 hover:opacity-100 hover:bg-red-500/10 text-red-500 transition-all md:opacity-0 md:group-hover:opacity-100"
+          books
+            .slice()
+            .sort((a, b) => b.lastRead - a.lastRead)
+            .map(book => {
+              const progress = book.totalPages > 0 ? Math.round((book.currentPage / book.totalPages) * 100) : 0;
+              return (
+                <div
+                  key={book.id}
+                  onClick={() => onSelect(book.id)}
+                  className="group relative flex items-center gap-4 p-4 rounded-2xl cursor-pointer transition-all active:scale-[0.98] hover:scale-[1.015]"
+                  style={{ backgroundColor: currentTheme.secondary, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
                 >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
+                  {/* Cover thumbnail */}
+                  <div className="w-12 h-16 rounded-xl flex items-center justify-center overflow-hidden shrink-0"
+                    style={{ background: 'rgba(59,130,246,0.1)' }}>
+                    {book.coverImage ? (
+                      <img src={book.coverImage} alt="Cover" className="w-full h-full object-cover" />
+                    ) : (
+                      <FileText size={22} style={{ color: currentTheme.accent, opacity: 0.6 }} />
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-sm truncate leading-tight" style={{ color: currentTheme.text }}>
+                      {book.title}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-1 opacity-40 text-[10px]" style={{ color: currentTheme.text }}>
+                      <Clock size={9} />
+                      <span>{formatTime(book.lastRead)}</span>
+                      <span>·</span>
+                      <span>p.{book.currentPage}/{book.totalPages}</span>
+                    </div>
+                    <div className="mt-2 h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.1)' }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${progress}%`, background: currentTheme.accent }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Delete button — always visible on mobile, subtle until tapped */}
+                  <button
+                    onClick={e => handleDeleteClick(e, book)}
+                    className={cn(
+                      'p-2.5 rounded-full transition-all shrink-0',
+                      deleteConfirm === book.id
+                        ? 'bg-red-500 text-white scale-110'
+                        : 'text-red-400 opacity-40 hover:opacity-100 hover:bg-red-500/10 active:opacity-100 active:bg-red-500/15'
+                    )}
+                    title="Delete book"
+                    aria-label="Delete book"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              );
+            })
         )}
       </div>
 
-      <button 
+      {/* Add button */}
+      <button
         onClick={() => setIsUploadModalOpen(true)}
-        className="flex items-center justify-center gap-2 px-4 py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl cursor-pointer transition-all shadow-lg shadow-blue-500/20 w-full mt-auto"
+        className="flex items-center justify-center gap-2 px-4 py-4 text-white rounded-2xl cursor-pointer transition-all shadow-lg w-full mt-auto active:scale-95"
+        style={{ background: currentTheme.accent, boxShadow: `0 8px 24px ${currentTheme.accent}40` }}
       >
-        <Plus size={24} />
+        <Plus size={22} />
+        <span className="font-bold text-sm">Add PDF</span>
       </button>
 
+      {/* Tip card */}
       {showTip && (
-        <div className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-xl relative">
-          <button onClick={dismissTip} className="absolute top-2 right-2 p-1 hover:bg-white/20 rounded-full transition-colors">
-            <X size={14} />
+        <div className="mt-3 p-4 rounded-2xl relative overflow-hidden"
+          style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.9), rgba(99,60,220,0.9))', color: '#fff' }}>
+          <button onClick={dismissTip} className="absolute top-2.5 right-2.5 p-1 hover:bg-white/20 rounded-full transition-colors">
+            <X size={13} />
           </button>
-          <h4 className="font-bold mb-1">Reading Tip</h4>
-          <p className="text-xs opacity-80 leading-relaxed pr-4">
-            Try the "Midnight" theme with background rain sounds for a deeply immersive late-night reading session.
+          <h4 className="font-bold text-sm mb-1">Pro Tip</h4>
+          <p className="text-xs opacity-80 leading-relaxed pr-5">
+            Try the Midnight theme with rain sounds for an immersive late-night reading session.
           </p>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteModalBook && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center p-6 rounded-3xl"
+          style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
+          onClick={() => setDeleteModalBook(null)}
+        >
+          <div
+            className="w-full max-w-xs rounded-3xl p-6 shadow-2xl flex flex-col gap-4"
+            style={{ backgroundColor: currentTheme.bg, border: '1px solid rgba(255,255,255,0.08)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center text-center gap-2">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1" style={{ background: 'rgba(239,68,68,0.1)' }}>
+                <Trash2 size={26} className="text-red-500" />
+              </div>
+              <h3 className="font-bold text-base" style={{ color: currentTheme.text }}>Delete Book?</h3>
+              <p className="text-sm opacity-50 leading-relaxed" style={{ color: currentTheme.text }}>
+                "<span className="font-semibold opacity-80">{deleteModalBook.title}</span>" will be permanently removed from your library and device. This cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteModalBook(null)}
+                className="flex-1 py-3 rounded-2xl font-semibold text-sm transition-all active:scale-95"
+                style={{ background: `${currentTheme.text}10`, color: currentTheme.text }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 py-3 rounded-2xl font-bold text-sm text-white transition-all active:scale-95"
+                style={{ background: '#EF4444', boxShadow: '0 4px 16px rgba(239,68,68,0.35)' }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Upload Modal */}
       {isUploadModalOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 rounded-3xl">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col gap-4" style={{ backgroundColor: currentTheme.bg, color: currentTheme.text }}>
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-xl font-bold">Upload PDF</h3>
-              <button onClick={handleCancelUpload} className="p-2 rounded-full hover:bg-black/10 transition-colors">
-                <X size={20} />
+        <div
+          className="absolute inset-0 z-50 flex items-end sm:items-center justify-center p-4 rounded-3xl"
+          style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)' }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl p-6 shadow-2xl flex flex-col gap-4"
+            style={{ backgroundColor: currentTheme.bg, border: '1px solid rgba(255,255,255,0.06)', boxShadow: '0 32px 64px rgba(0,0,0,0.4)' }}
+          >
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold" style={{ color: currentTheme.text }}>Add to Library</h3>
+              <button onClick={resetModal} className="p-2 rounded-full hover:bg-black/10 transition-colors" style={{ color: currentTheme.text }}>
+                <X size={18} />
               </button>
             </div>
 
+            {uploadError && (
+              <div className="flex items-start gap-2 px-4 py-3 rounded-xl text-sm"
+                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#F87171' }}>
+                <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                {uploadError}
+              </div>
+            )}
+
             {!selectedFile ? (
-              <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-blue-500/50 rounded-2xl cursor-pointer hover:bg-blue-500/5 transition-colors">
-                <Upload size={32} className="text-blue-500 mb-2" />
-                <span className="font-medium text-blue-500">Select a PDF file</span>
-                <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileChange} />
+              <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-colors hover:bg-blue-500/5"
+                style={{ borderColor: `${currentTheme.accent}50` }}>
+                <Upload size={28} style={{ color: currentTheme.accent, marginBottom: 8 }} />
+                <span className="font-semibold text-sm" style={{ color: currentTheme.accent }}>Select PDF File</span>
+                <span className="text-[10px] opacity-40 mt-1" style={{ color: currentTheme.text }}>Max {MAX_PDF_SIZE_MB} MB</span>
+                <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
               </label>
             ) : (
               <div className="flex flex-col gap-4">
-                <div className="flex items-center gap-3 p-3 bg-blue-500/10 rounded-xl text-blue-500">
-                  <FileText size={24} className="shrink-0" />
-                  <span className="font-medium truncate text-sm">{selectedFile.name}</span>
+                <div className="flex items-center gap-3 px-4 py-3 rounded-xl"
+                  style={{ background: `${currentTheme.accent}15`, border: `1px solid ${currentTheme.accent}25` }}>
+                  <FileText size={20} style={{ color: currentTheme.accent }} className="shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate" style={{ color: currentTheme.text }}>{selectedFile.name}</p>
+                    <p className="text-[10px] opacity-50" style={{ color: currentTheme.text }}>{formatFileSize(selectedFile.size)}</p>
+                  </div>
+                  {metaExtracted && <CheckCircle2 size={16} className="text-green-500 shrink-0" />}
                 </div>
+
                 <div className="flex flex-col gap-2">
-                  <label className="text-sm font-bold opacity-70">Book Name</label>
-                  <input 
-                    type="text" 
-                    value={customBookName}
-                    onChange={(e) => setCustomBookName(e.target.value)}
-                    placeholder="Leave empty to auto-detect..."
-                    className="w-full px-4 py-3 rounded-xl border-2 border-black/10 bg-transparent focus:border-blue-500 focus:outline-none transition-colors"
-                    style={{ color: currentTheme.text }}
-                    autoFocus
-                  />
-                  <p className="text-[10px] opacity-50">If left empty, Ribi will try to extract the real book name from the PDF metadata.</p>
+                  <label className="text-[10px] font-bold uppercase tracking-widest opacity-50" style={{ color: currentTheme.text }}>Book Name</label>
+                  <div className="relative">
+                    {extractingMeta ? (
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 opacity-60"
+                        style={{ borderColor: `${currentTheme.text}15`, color: currentTheme.text }}>
+                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-sm">Extracting title…</span>
+                      </div>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={bookName}
+                          onChange={e => setBookName(e.target.value)}
+                          placeholder="Book name"
+                          className="w-full pl-4 pr-10 py-3 rounded-xl border-2 bg-transparent focus:outline-none transition-colors text-sm"
+                          style={{ borderColor: `${currentTheme.text}15`, color: currentTheme.text }}
+                          onFocus={e => e.target.style.borderColor = currentTheme.accent}
+                          onBlur={e => e.target.style.borderColor = `${currentTheme.text}15`}
+                          autoFocus
+                        />
+                        <Edit2 size={13} className="absolute right-3.5 top-3.5 opacity-30" style={{ color: currentTheme.text }} />
+                      </>
+                    )}
+                  </div>
+                  {metaExtracted && (
+                    <p className="text-[10px] opacity-40 flex items-center gap-1" style={{ color: currentTheme.text }}>
+                      <CheckCircle2 size={10} /> Title extracted from PDF metadata — edit if needed
+                    </p>
+                  )}
                 </div>
-                <button 
-                  onClick={handleConfirmUpload}
-                  className="w-full py-3 mt-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold transition-colors"
-                >
-                  Confirm Upload
-                </button>
+
+                <div className="flex gap-3 pt-1">
+                  <button onClick={resetModal}
+                    className="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors"
+                    style={{ background: 'rgba(0,0,0,0.08)', color: currentTheme.text }}>
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmUpload}
+                    disabled={extractingMeta || !bookName.trim()}
+                    className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40"
+                    style={{ background: currentTheme.accent }}>
+                    Add to Library
+                  </button>
+                </div>
               </div>
             )}
           </div>

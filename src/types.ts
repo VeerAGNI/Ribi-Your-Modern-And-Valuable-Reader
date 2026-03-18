@@ -9,6 +9,15 @@ export interface Bookmark {
   timestamp: number;
 }
 
+export interface ReadingStats {
+  totalPagesRead: number;
+  unlockedAchievements: string[];
+  streak: number;
+  longestStreak: number;
+  lastReadDate: string;
+  totalReadingMins?: number;
+}
+
 export interface ReaderSettings {
   theme: Theme;
   viewMode: ViewMode;
@@ -20,10 +29,9 @@ export interface ReaderSettings {
   backgroundMusic: string | null;
   volume: number;
   brightness: number;
-  stats?: {
-    totalPagesRead: number;
-    unlockedAchievements: string[];
-  };
+  renderQuality: number;
+  autoNightMode?: boolean;
+  stats?: ReadingStats;
 }
 
 export interface BookMetadata {
@@ -37,4 +45,10 @@ export interface BookMetadata {
   lastRead: number;
   bookmarks: Bookmark[];
   coverImage?: string;
+}
+
+export interface TocItem {
+  title: string;
+  page: number;
+  level: number;
 }
