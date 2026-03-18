@@ -1,20 +1,8 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/d1163401-f328-4333-a4d9-e7b38e7c973a
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# Ribi
+###### She's one of the most valuable readers out there, with her beautful design, she not only makes book reading an attractive habit but also an easy thing.
+---
+# Try Ribi
+**1.** Go to ribi.netlify.app
+**2.** Open the library
+**3.** Upload your book
+**4.** Start reading it
