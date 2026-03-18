@@ -363,6 +363,22 @@ export default function App() {
       .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
   };
 
+  // Auto night mode — switches to Midnight at 9 PM, restores Light at 6 AM
+  useEffect(() => {
+    if (!settings.autoNightMode) return;
+    const check = () => {
+      const h = new Date().getHours();
+      const isNight = h >= 21 || h < 6;
+      const isDark = settings.theme === 'midnight' || settings.theme === 'dark' || settings.theme === 'nord';
+      if (isNight && !isDark) updateSettings({ theme: 'midnight' });
+      if (!isNight && settings.theme === 'midnight') updateSettings({ theme: 'light' });
+    };
+    check();
+    const id = setInterval(check, 60000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.autoNightMode]);
+
   const activeBook = books.find(b => b.id === activeBookId);
   const currentTheme = THEMES[settings.theme];
   const streak = settings.stats?.streak || 0;
@@ -435,12 +451,13 @@ export default function App() {
               />
             </ErrorBoundary>
           ) : (
-            <div className="flex flex-col items-center justify-start h-full text-center p-8 overflow-y-auto custom-scrollbar">
+            <div className="w-full h-full overflow-y-auto custom-scrollbar">
+              <div className="min-h-full flex flex-col items-center justify-center text-center px-6 py-14">
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                className="max-w-2xl w-full pb-20 pt-16 z-10"
+                className="max-w-md w-full"
               >
                 <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8"
                   style={{ background: `${currentTheme.accent}18`, color: currentTheme.accent }}>
@@ -530,6 +547,7 @@ export default function App() {
                   </p>
                 </div>
               </motion.div>
+              </div>
             </div>
           )}
         </main>

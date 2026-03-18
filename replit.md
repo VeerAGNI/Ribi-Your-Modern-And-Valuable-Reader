@@ -27,8 +27,8 @@ src/
   components/
     AuthScreen.tsx     - Google + admin email/password auth (secret: click logo 5x fast)
     Library.tsx        - Book library, PDF upload with auto metadata extraction
-    PDFReader.tsx      - PDF viewer with canvas bug fixed, keyboard nav, quality rendering
-    PDFPage.tsx        - Virtualized PDF page renderer with LRU cache (max 20 pages)
+    PDFReader.tsx      - PDF viewer: auto-fit scale, swipe gestures, TOC panel, error handling
+    PDFPage.tsx        - Per-page renderer: fixed cloneNode bug, LRU cache (max 8), global semaphore (max 3)
     MusicPlayer.tsx    - Background music controls
     SettingsPanel.tsx  - Reader settings incl. PDF Quality slider
     SplashScreen.tsx   - Futuristic VEUROS splash with Orbitron font + blue glows

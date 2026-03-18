@@ -14,7 +14,8 @@ export interface ReadingStats {
   unlockedAchievements: string[];
   streak: number;
   longestStreak: number;
-  lastReadDate: string; // "YYYY-MM-DD"
+  lastReadDate: string;
+  totalReadingMins?: number;
 }
 
 export interface ReaderSettings {
@@ -29,6 +30,7 @@ export interface ReaderSettings {
   volume: number;
   brightness: number;
   renderQuality: number;
+  autoNightMode?: boolean;
   stats?: ReadingStats;
 }
 
@@ -43,4 +45,10 @@ export interface BookMetadata {
   lastRead: number;
   bookmarks: Bookmark[];
   coverImage?: string;
+}
+
+export interface TocItem {
+  title: string;
+  page: number;
+  level: number;
 }

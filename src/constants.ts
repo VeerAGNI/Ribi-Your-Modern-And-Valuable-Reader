@@ -1,36 +1,11 @@
 import { Theme, ReaderSettings } from './types';
 
 export const THEMES: Record<Theme, { bg: string; text: string; accent: string; secondary: string }> = {
-  light: {
-    bg: '#FFFFFF',
-    text: '#1A1A1A',
-    accent: '#3B82F6',
-    secondary: '#F3F4F6',
-  },
-  dark: {
-    bg: '#111827',
-    text: '#F9FAFB',
-    accent: '#60A5FA',
-    secondary: '#1F2937',
-  },
-  sepia: {
-    bg: '#F4ECD8',
-    text: '#5B4636',
-    accent: '#946B49',
-    secondary: '#EAE0C9',
-  },
-  nord: {
-    bg: '#2E3440',
-    text: '#ECEFF4',
-    accent: '#88C0D0',
-    secondary: '#3B4252',
-  },
-  midnight: {
-    bg: '#000000',
-    text: '#E5E7EB',
-    accent: '#8B5CF6',
-    secondary: '#111111',
-  },
+  light: { bg: '#FFFFFF', text: '#1A1A1A', accent: '#3B82F6', secondary: '#F3F4F6' },
+  dark: { bg: '#111827', text: '#F9FAFB', accent: '#60A5FA', secondary: '#1F2937' },
+  sepia: { bg: '#F4ECD8', text: '#5B4636', accent: '#946B49', secondary: '#EAE0C9' },
+  nord: { bg: '#2E3440', text: '#ECEFF4', accent: '#88C0D0', secondary: '#3B4252' },
+  midnight: { bg: '#000000', text: '#E5E7EB', accent: '#8B5CF6', secondary: '#111111' },
 };
 
 export const DEFAULT_SETTINGS: ReaderSettings = {
@@ -45,12 +20,14 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   volume: 0.5,
   brightness: 100,
   renderQuality: 2,
+  autoNightMode: false,
   stats: {
     totalPagesRead: 0,
     unlockedAchievements: [],
     streak: 0,
     longestStreak: 0,
     lastReadDate: '',
+    totalReadingMins: 0,
   },
 };
 
@@ -102,3 +79,5 @@ export const BACKGROUND_TRACKS = [
 
 export const MAX_PDF_SIZE_MB = 40;
 export const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
+
+export const AVG_PAGES_PER_MIN = 1.5;
