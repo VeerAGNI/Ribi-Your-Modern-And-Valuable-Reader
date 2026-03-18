@@ -1,5 +1,4 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertCircle, RefreshCw, RotateCcw } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -8,96 +7,79 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
-  isFirestoreError: boolean;
-  firestoreDetails: any;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
+export class ErrorBoundary extends React.Component<Props, State> {
   public state: State = {
     hasError: false,
-    error: null,
-    isFirestoreError: false,
-    firestoreDetails: null,
+    error: null
   };
 
   public static getDerivedStateFromError(error: Error): State {
-    let isFirestoreError = false;
-    let firestoreDetails = null;
-
-    try {
-      const parsed = JSON.parse(error.message);
-      if (parsed?.operationType && parsed?.error) {
-        isFirestoreError = true;
-        firestoreDetails = parsed;
-      }
-    } catch { /* not a structured error */ }
-
-    return { hasError: true, error, isFirestoreError, firestoreDetails };
+    return { hasError: true, error };
   }
 
-  public componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('ErrorBoundary caught:', error.message, info.componentStack);
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Uncaught error:', error, errorInfo);
   }
-
-  private handleReset = () => {
-    this.setState({ hasError: false, error: null, isFirestoreError: false, firestoreDetails: null });
-  };
 
   public render() {
-    if (!this.state.hasError) return this.props.children;
+    if (this.state.hasError) {
+      let errorMessage = this.state.error?.message || 'An unexpected error occurred.';
+      let isFirestoreError = false;
+      let firestoreDetails = null;
 
-    const { isFirestoreError, firestoreDetails, error } = this.state;
+      try {
+        const parsed = JSON.parse(errorMessage);
+        if (parsed.operationType && parsed.error) {
+          isFirestoreError = true;
+          firestoreDetails = parsed;
+        }
+      } catch (e) {
+        // Not a JSON error message
+      }
 
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6"
-        style={{ background: '#0a0f1e', color: '#F9FAFB' }}>
-        <div className="max-w-md w-full rounded-3xl p-8 text-center"
-          style={{ background: '#111827', border: '1px solid rgba(239,68,68,0.2)', boxShadow: '0 32px 64px rgba(0,0,0,0.5)' }}>
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
-            style={{ background: 'rgba(239,68,68,0.12)' }}>
-            <AlertCircle size={32} className="text-red-400" />
-          </div>
+      return (
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 text-white">
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl max-w-2xl w-full border border-red-500/20">
+            <h1 className="text-2xl font-bold text-red-400 mb-4 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+              Something went wrong
+            </h1>
 
-          <h2 className="text-xl font-bold mb-2 text-white">Something went wrong</h2>
-
-          {isFirestoreError ? (
-            <div className="text-left mt-4">
-              <p className="text-sm text-slate-400 mb-4">
-                A database permission error occurred. This may be due to Firestore security rules.
-              </p>
-              <div className="rounded-xl p-3 text-xs font-mono text-red-300 mb-4 text-left overflow-auto"
-                style={{ background: 'rgba(0,0,0,0.4)' }}>
-                <p><span className="opacity-50">operation:</span> {firestoreDetails?.operationType}</p>
-                <p><span className="opacity-50">path:</span> {firestoreDetails?.path}</p>
-                <p><span className="opacity-50">error:</span> {firestoreDetails?.error}</p>
+            {isFirestoreError ? (
+              <div className="space-y-4">
+                <p className="text-slate-300">
+                  A database permission error occurred. This usually means the security rules need to be updated.
+                </p>
+                <div className="bg-slate-950 p-4 rounded-lg overflow-auto text-sm font-mono text-red-300">
+                  <p><strong>Operation:</strong> {firestoreDetails.operationType}</p>
+                  <p><strong>Path:</strong> {firestoreDetails.path}</p>
+                  <p><strong>Error:</strong> {firestoreDetails.error}</p>
+                </div>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="mt-6 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors"
+                >
+                  Reload Application
+                </button>
               </div>
-            </div>
-          ) : (
-            <p className="text-sm text-slate-400 mt-2 mb-4">
-              {error?.message || 'An unexpected error occurred.'}
-            </p>
-          )}
-
-          <div className="flex gap-3 justify-center mt-6">
-            <button
-              onClick={this.handleReset}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors text-white"
-              style={{ background: '#3B82F6' }}
-            >
-              <RefreshCw size={14} />
-              Try Again
-            </button>
-            <button
-              onClick={() => window.location.reload()}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors text-slate-300"
-              style={{ background: 'rgba(255,255,255,0.08)' }}
-            >
-              <RotateCcw size={14} />
-              Reload App
-            </button>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-slate-300">{errorMessage}</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="mt-6 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
+                >
+                  Reload Application
+                </button>
+              </div>
+            )}
           </div>
         </div>
-      </div>
-    );
+      );
+    }
+
+    return this.props.children;
   }
 }
