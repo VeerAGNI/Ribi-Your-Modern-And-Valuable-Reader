@@ -173,13 +173,12 @@ export const PDFPage = React.memo(({
         isLandscape ? "py-1 px-2" : "py-2 px-4"
       )}
       style={{
-        aspectRatio: `${aspectRatio}`,
         minHeight: '200px'
       }}
     >
       <div 
         className={cn(
-          "shadow-2xl bg-white overflow-hidden rounded-sm transition-transform duration-500 relative w-full h-full",
+          "shadow-2xl bg-white overflow-hidden rounded-sm transition-transform duration-500 relative w-full",
           theme === 'sepia' && "sepia-texture",
           (theme === 'dark' || theme === 'nord') && "dark-texture",
           theme === 'midnight' && "midnight-texture",
@@ -187,10 +186,11 @@ export const PDFPage = React.memo(({
         )}
         style={{ 
           filter: getPdfFilter(),
+          aspectRatio: `${aspectRatio}`,
           boxShadow: theme === 'sepia' ? '0 25px 50px -12px rgba(91, 70, 54, 0.25)' : '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
         }}
       >
-        <div ref={canvasContainerRef} className="w-full h-full" />
+        <div ref={canvasContainerRef} className="w-full h-full flex items-center justify-center" />
         {!isRendered && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/50 backdrop-blur-sm">
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />

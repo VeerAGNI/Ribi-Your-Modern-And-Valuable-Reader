@@ -452,13 +452,13 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.8, ease: "easeOut" }}
-                  className="shadow-2xl rounded-sm overflow-hidden bg-white relative"
+                  className="shadow-2xl rounded-sm overflow-hidden bg-white relative w-full max-w-5xl"
                   style={{ 
                     filter: getPdfFilter(),
                     boxShadow: theme === 'sepia' ? '0 25px 50px -12px rgba(91, 70, 54, 0.25)' : '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
                   }}
                 >
-                  <canvas ref={canvasRef} className="max-w-full h-auto block" />
+                  <canvas ref={canvasRef} className="w-full h-auto block" />
                 </motion.div>
               </div>
             )}
