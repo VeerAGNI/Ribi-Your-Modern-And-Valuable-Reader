@@ -93,16 +93,24 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     try {
       const page = await pdfDoc.getPage(currentPage || 1);
       const naturalVp = page.getViewport({ scale: 1.0 });
-      const padding = isLandscape ? 16 : 24; // Match PDFPage padding
+
       const containerW = viewportRef.current.clientWidth || window.innerWidth;
       const containerH = viewportRef.current.clientHeight || window.innerHeight;
 
-      const scaleW = (containerW - padding) / naturalVp.width;
+      // In landscape, we want to fill the width (0 padding)
+      // In portrait, we want some breathing room (32px total horizontal padding)
+      const horizontalPadding = isLandscape ? 0 : 32;
+      const verticalPadding = isLandscape ? 0 : 32;
+
+      const scaleW = (containerW - horizontalPadding) / naturalVp.width;
+
       if (viewMode === 'page') {
-        const scaleH = (containerH - padding) / naturalVp.height;
-        return Math.max(0.3, Math.min(scaleW, scaleH));
+        const scaleH = (containerH - verticalPadding) / naturalVp.height;
+        // Fit both width and height to ensure no cropping
+        return Math.max(0.2, Math.min(scaleW, scaleH));
       }
-      return Math.max(0.3, scaleW);
+
+      return Math.max(0.2, scaleW);
     } catch {
       return 1.0;
     }
@@ -257,11 +265,12 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
     try {
       const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale });
+      const viewport = page.getViewport({ scale: 1.0 });
       setPageDimensions({ width: viewport.width, height: viewport.height });
 
+      const scaledViewport = page.getViewport({ scale });
       const maxDim = 10000;
-      const multiplier = Math.min(dpr, maxDim / Math.max(viewport.width, viewport.height));
+      const multiplier = Math.min(dpr, maxDim / Math.max(scaledViewport.width, scaledViewport.height));
       const rv = page.getViewport({ scale: scale * multiplier });
 
       const ctx = canvas.getContext('2d', { alpha: false });
@@ -589,19 +598,19 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             ) : (
               // ── Single page mode — persistent canvas, no key remounting ──
               <div className={cn(
-                'flex justify-center items-start min-h-full',
-                isLandscape ? 'p-2' : 'p-3'
+                'flex justify-center items-center min-h-full w-full',
+                isLandscape ? 'p-0' : 'p-4'
               )}>
                 <div
-                  className="rounded-sm overflow-hidden bg-white relative"
+                  className="rounded-sm overflow-hidden bg-white relative transition-all duration-300"
                   style={{
                     filter: getPdfFilter(),
                     boxShadow: theme === 'sepia'
                       ? '0 20px 48px -10px rgba(91,70,54,0.3)'
                       : '0 20px 56px -12px rgba(0,0,0,0.55)',
-                    maxWidth: '100%',
+                    width: '100%',
+                    maxWidth: pageDimensions ? `${pageDimensions.width * scale}px` : 'none',
                     aspectRatio: pageDimensions ? `${pageDimensions.width} / ${pageDimensions.height}` : 'auto',
-                    width: pageDimensions ? `${pageDimensions.width}px` : 'auto',
                   }}
                 >
                   <canvas ref={setCanvasRef} className="block w-full h-full" />

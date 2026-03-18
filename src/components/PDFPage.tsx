@@ -156,13 +156,14 @@ export const PDFPage = React.memo(({
       const page = await pdf.getPage(pageNumber);
       if (!isMounted.current) { semRelease(); return; }
 
-      const viewport = page.getViewport({ scale });
+      const viewport = page.getViewport({ scale: 1.0 });
       setPageDimensions({ width: viewport.width, height: viewport.height });
 
+      const scaledViewport = page.getViewport({ scale });
       // Render at devicePixelRatio only (no quality multiplier — sharpness is via CSS filter)
       // Clamp canvas dimensions to 8000px to stay within mobile GPU limits
       const maxDim = 8000;
-      const renderDpr = Math.min(dpr, maxDim / Math.max(viewport.width, viewport.height));
+      const renderDpr = Math.min(dpr, maxDim / Math.max(scaledViewport.width, scaledViewport.height));
       const renderViewport = page.getViewport({ scale: scale * renderDpr });
 
       const canvas = document.createElement('canvas');
@@ -232,19 +233,19 @@ export const PDFPage = React.memo(({
   return (
     <div
       ref={containerRef}
-      className={`flex justify-center items-start w-full ${isLandscape ? 'p-2' : 'py-4 px-3'}`}
-      style={{ minHeight: isLandscape ? 300 : 500 }}
+      className={`flex justify-center items-start w-full ${isLandscape ? 'p-0' : 'py-4 px-4'}`}
+      style={{ minHeight: isLandscape ? 100 : 300 }}
     >
       <div
-        className="bg-white overflow-hidden rounded-sm relative"
+        className="bg-white overflow-hidden rounded-sm relative transition-shadow duration-300"
         style={{
           filter: getPdfFilter(),
           boxShadow: theme === 'sepia'
             ? '0 16px 40px -8px rgba(91,70,54,0.3)'
             : '0 16px 48px -12px rgba(0,0,0,0.5)',
-          maxWidth: '100%',
+          width: '100%',
+          maxWidth: pageDimensions ? `${pageDimensions.width * scale}px` : 'none',
           aspectRatio: pageDimensions ? `${pageDimensions.width} / ${pageDimensions.height}` : 'auto',
-          width: pageDimensions ? `${pageDimensions.width}px` : 'auto',
         }}
       >
         {/* Canvas container — sized by the canvas itself */}
