@@ -1,0 +1,31 @@
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // ── Compute fit-to-width scale ──────────────────────────────────────────────
+  const computeFitScale = useCallback(async (pdfDoc: pdfjsLib.PDFDocumentProxy): Promise<number> => {
+    if (!viewportRef.current) return 1.0;
+    try {
+      const page = await pdfDoc.getPage(1);
+      const naturalVp = page.getViewport({ scale: 1.0 });
+      const padding = 24; // 12px each side for tight mobile fit
+      const containerW = viewportRef.current.clientWidth || window.innerWidth;
+      return Math.max(0.3, (containerW - padding) / naturalVp.width);
+    } catch {
+      return 1.0;
+    }
+  }, []);
+
+  // ── Load PDF ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let destroyed = false;
+    let objectUrl: string | null = null;
+
+    const load = async () => {
+      setLoading(true);
+      setLoadError(null);
+      setToc([]);
+
+      if (renderTaskRef.current) {
+        renderTaskRef.current.cancel();
+        try { await renderTaskRef.current.promise; } catch { /* ignore */ }

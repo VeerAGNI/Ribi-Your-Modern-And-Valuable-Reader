@@ -75,6 +75,7 @@ export const PDFPage = React.memo(({
   const [isRendered, setIsRendered] = useState(false);
   const [isInView, setIsInView] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
   const isMounted = useRef(true);
 
   // Clamp devicePixelRatio to max 2 to prevent OOM on high-DPI mobile
@@ -156,6 +157,7 @@ export const PDFPage = React.memo(({
       if (!isMounted.current) { semRelease(); return; }
 
       const viewport = page.getViewport({ scale });
+      setPageDimensions({ width: viewport.width, height: viewport.height });
 
       // Render at devicePixelRatio only (no quality multiplier — sharpness is via CSS filter)
       // Clamp canvas dimensions to 8000px to stay within mobile GPU limits
@@ -171,9 +173,7 @@ export const PDFPage = React.memo(({
       ctx.imageSmoothingQuality = 'high';
       canvas.width = renderViewport.width;
       canvas.height = renderViewport.height;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      canvas.className = 'block';
+      canvas.className = 'block w-full h-full';
 
       const task = page.render({ canvasContext: ctx, viewport: renderViewport } as any);
       renderTaskRef.current = task;
@@ -243,10 +243,12 @@ export const PDFPage = React.memo(({
             ? '0 16px 40px -8px rgba(91,70,54,0.3)'
             : '0 16px 48px -12px rgba(0,0,0,0.5)',
           maxWidth: '100%',
+          aspectRatio: pageDimensions ? `${pageDimensions.width} / ${pageDimensions.height}` : 'auto',
+          width: pageDimensions ? `${pageDimensions.width}px` : 'auto',
         }}
       >
         {/* Canvas container — sized by the canvas itself */}
-        <div ref={canvasContainerRef} />
+        <div ref={canvasContainerRef} className="w-full h-full" />
 
         {!isRendered && !renderError && (
           <div className="absolute inset-0 flex items-center justify-center"

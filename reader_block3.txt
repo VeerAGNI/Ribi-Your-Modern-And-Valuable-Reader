@@ -1,0 +1,26 @@
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (renderTaskRef.current) { renderTaskRef.current.cancel(); renderTaskRef.current = null; }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file]);
+
+  // ── ResizeObserver: re-compute fit scale on container resize ────────────────
+  useEffect(() => {
+    if (!pdf || !isAutoFit || isLandscape) return;
+    const el = viewportRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(async () => {
+      if (!isAutoFit || isLandscape) return;
+      const fit = await computeFitScale(pdf);
+      setScale(fit);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pdf, isAutoFit, isLandscape, computeFitScale]);
+
+  // ── Page-mode canvas render ─────────────────────────────────────────────────
+  const renderPage = useCallback(async (pageNum: number) => {
+    const canvas = canvasRef.current;
+    if (!pdf || !canvas || viewMode !== 'page') return;
+
+    if (isRenderingRef.current && renderTaskRef.current) {

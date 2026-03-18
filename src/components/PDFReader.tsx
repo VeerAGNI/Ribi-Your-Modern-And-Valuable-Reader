@@ -75,6 +75,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const [pageInput, setPageInput] = useState<string | null>(null);
   const [toc, setToc] = useState<TocItem[]>([]);
   const [showToc, setShowToc] = useState(false);
+  const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
 
   const currentTheme = THEMES[theme];
   const quality = Math.max(1, Math.min(4, renderQuality ?? 2));
@@ -90,15 +91,22 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const computeFitScale = useCallback(async (pdfDoc: pdfjsLib.PDFDocumentProxy): Promise<number> => {
     if (!viewportRef.current) return 1.0;
     try {
-      const page = await pdfDoc.getPage(1);
+      const page = await pdfDoc.getPage(currentPage || 1);
       const naturalVp = page.getViewport({ scale: 1.0 });
-      const padding = 24; // 12px each side for tight mobile fit
+      const padding = isLandscape ? 16 : 24; // Match PDFPage padding
       const containerW = viewportRef.current.clientWidth || window.innerWidth;
-      return Math.max(0.3, (containerW - padding) / naturalVp.width);
+      const containerH = viewportRef.current.clientHeight || window.innerHeight;
+
+      const scaleW = (containerW - padding) / naturalVp.width;
+      if (viewMode === 'page') {
+        const scaleH = (containerH - padding) / naturalVp.height;
+        return Math.max(0.3, Math.min(scaleW, scaleH));
+      }
+      return Math.max(0.3, scaleW);
     } catch {
       return 1.0;
     }
-  }, []);
+  }, [isLandscape, viewMode, currentPage]);
 
   // ── Load PDF ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -152,12 +160,10 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
         setPdf(pdfDoc);
         setNumPages(pdfDoc.numPages);
 
-        // Auto-fit scale to container width (portrait only — landscape kept as-is)
-        if (!isLandscape) {
-          const fit = await computeFitScale(pdfDoc);
-          setScale(fit);
-          setIsAutoFit(true);
-        }
+        // Auto-fit scale to container width
+        const fit = await computeFitScale(pdfDoc);
+        setScale(fit);
+        setIsAutoFit(true);
 
         // Extract table of contents
         try {
@@ -225,11 +231,11 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
   // ── ResizeObserver: re-compute fit scale on container resize ────────────────
   useEffect(() => {
-    if (!pdf || !isAutoFit || isLandscape) return;
+    if (!pdf || !isAutoFit) return;
     const el = viewportRef.current;
     if (!el) return;
     const ro = new ResizeObserver(async () => {
-      if (!isAutoFit || isLandscape) return;
+      if (!isAutoFit) return;
       const fit = await computeFitScale(pdf);
       setScale(fit);
     });
@@ -252,6 +258,8 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     try {
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale });
+      setPageDimensions({ width: viewport.width, height: viewport.height });
+
       const maxDim = 10000;
       const multiplier = Math.min(dpr, maxDim / Math.max(viewport.width, viewport.height));
       const rv = page.getViewport({ scale: scale * multiplier });
@@ -263,8 +271,6 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       ctx.imageSmoothingQuality = 'high';
       canvas.width = rv.width;
       canvas.height = rv.height;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
 
       const task = page.render({ canvasContext: ctx, viewport: rv } as any);
       renderTaskRef.current = task;
@@ -594,9 +600,11 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                       ? '0 20px 48px -10px rgba(91,70,54,0.3)'
                       : '0 20px 56px -12px rgba(0,0,0,0.55)',
                     maxWidth: '100%',
+                    aspectRatio: pageDimensions ? `${pageDimensions.width} / ${pageDimensions.height}` : 'auto',
+                    width: pageDimensions ? `${pageDimensions.width}px` : 'auto',
                   }}
                 >
-                  <canvas ref={setCanvasRef} className="block" style={{ maxWidth: '100%', height: 'auto' }} />
+                  <canvas ref={setCanvasRef} className="block w-full h-full" />
                 </div>
               </div>
             )}
