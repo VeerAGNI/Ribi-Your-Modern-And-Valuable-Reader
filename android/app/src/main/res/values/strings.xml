@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ribi</string>
+    <string name="sign_in_with_google">Continue with Google</string>
+    <string name="welcome_to_ribi">Welcome to Ribi</string>
+    <string name="your_next_page_is_waiting">Your next page is waiting.</string>
+    <string name="library">Library</string>
+    <string name="settings">Settings</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="about">About</string>
+    <string name="add_pdf">Add PDF</string>
+    <string name="delete_book">Delete Book</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete">Delete</string>
+    <string name="continue_reading">Continue Reading</string>
+    <string name="reading_streak">Reading Streak</string>
+    <string name="days">days</string>
+    <string name="pages_read">pages read</string>
+    <string name="founded_by">Founded by Veer Agnihotri</string>
+    <string name="veuros_copyright">© 2024 Veuros. All rights reserved.</string>
+    <string name="default_web_client_id" translatable="false">YOUR_WEB_CLIENT_ID_HERE</string>
+</resources>
