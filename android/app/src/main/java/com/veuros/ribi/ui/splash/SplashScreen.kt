@@ -1,9 +1,11 @@
 package com.veuros.ribi.ui.splash
 
-import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -12,206 +14,110 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
-import androidx.compose.material3.Text
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.veuros.ribi.R
 import kotlinx.coroutines.delay
 
-private val SplashDark = Color(0xFF00040F)
-private val GlowBlue   = Color(0xFF2563EB)
-private val GlowTeal   = Color(0xFF38BDF8)
-private val GlowPurple = Color(0xFF633CDC)
-
 @Composable
-fun SplashScreen(onComplete: () -> Unit) {
-    var phase by remember { mutableStateOf(0) }
+fun SplashScreen(onReady: () -> Unit) {
+    var phase by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
-        delay(400)
-        phase = 1   // fade in text
-        delay(3800)
-        phase = 2   // fade out
-        delay(900)
-        onComplete()
+        delay(200);  phase = 1
+        delay(1100); phase = 2
+        delay(900);  phase = 3
+        delay(450);  onReady()
     }
 
-    // Animated values
-    val textAlpha by animateFloatAsState(
-        targetValue = when (phase) { 1 -> 1f; 2 -> 0f; else -> 0f },
-        animationSpec = tween(900, easing = FastOutSlowInEasing), label = "textAlpha"
+    val veurosAlpha by animateFloatAsState(
+        targetValue = if (phase in 1..2) 1f else 0f,
+        animationSpec = tween(650, easing = FastOutSlowInEasing), label = "vA"
     )
-    val textScale by animateFloatAsState(
-        targetValue = if (phase >= 1) 1f else 0.88f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
-        label = "textScale"
+    val veurosScale by animateFloatAsState(
+        targetValue = if (phase >= 1) 1f else 0.80f,
+        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMediumLow), label = "vS"
     )
-    val bgAlpha by animateFloatAsState(
-        targetValue = if (phase == 2) 0f else 1f,
-        animationSpec = tween(900), label = "bgAlpha"
+    val ribiAlpha by animateFloatAsState(
+        targetValue = if (phase == 2) 1f else 0f,
+        animationSpec = tween(550, easing = FastOutSlowInEasing), label = "rA"
+    )
+    val ribiSlide by animateFloatAsState(
+        targetValue = if (phase == 2) 0f else 12f,
+        animationSpec = tween(550, easing = FastOutSlowInEasing), label = "rS"
     )
 
-    // Pulsing glow orbs
     val infiniteTransition = rememberInfiniteTransition(label = "glow")
-    val glowScale by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 1.1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ), label = "glowScale"
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.12f, targetValue = 0.30f,
+        animationSpec = infiniteRepeatable(tween(2000), RepeatMode.Reverse), label = "gA"
     )
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .alpha(bgAlpha)
-            .background(SplashDark),
+        modifier = Modifier.fillMaxSize().background(Color(0xFF050912)),
         contentAlignment = Alignment.Center
     ) {
-        // Blue glow orb
+        // Pulsing glow orbs
         Box(
-            modifier = Modifier
-                .size(400.dp)
-                .scale(glowScale)
-                .blur(80.dp)
+            modifier = Modifier.size(560.dp).offset(x = (-90).dp, y = (-110).dp).blur(100.dp)
                 .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(GlowBlue.copy(alpha = 0.22f), Color.Transparent)
-                    ),
-                    shape = androidx.compose.foundation.shape.CircleShape
+                    Brush.radialGradient(listOf(Color(0xFF3B82F6).copy(glowAlpha), Color.Transparent)),
+                    CircleShape
+                )
+        )
+        Box(
+            modifier = Modifier.size(420.dp).offset(x = 110.dp, y = 130.dp).blur(100.dp)
+                .background(
+                    Brush.radialGradient(listOf(Color(0xFF8B5CF6).copy(glowAlpha * 0.6f), Color.Transparent)),
+                    CircleShape
                 )
         )
 
-        // Teal glow
-        Box(
-            modifier = Modifier
-                .size(300.dp)
-                .offset(x = (-20).dp, y = (-40).dp)
-                .scale(1f / glowScale)
-                .blur(60.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(GlowTeal.copy(alpha = 0.18f), Color.Transparent)
-                    ),
-                    shape = androidx.compose.foundation.shape.CircleShape
-                )
-        )
-
-        // Purple glow
-        Box(
-            modifier = Modifier
-                .size(250.dp)
-                .offset(x = 30.dp, y = 40.dp)
-                .scale(glowScale * 0.9f)
-                .blur(50.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(GlowPurple.copy(alpha = 0.14f), Color.Transparent)
-                    ),
-                    shape = androidx.compose.foundation.shape.CircleShape
-                )
-        )
-
-        // Main content
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .scale(textScale)
-                .alpha(textAlpha)
+            verticalArrangement = Arrangement.Center
         ) {
-            // VEUROS title with gradient
-            Text(
-                text = "VEUROS",
-                style = TextStyle(
-                    fontWeight = FontWeight.Black,
-                    fontSize = 72.sp,
-                    letterSpacing = 8.sp,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White,
-                            Color(0xFF93C5FD),
-                            Color(0xFF3B82F6),
-                            Color(0xFF1D4ED8)
-                        )
-                    )
-                )
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Separator line
-            Box(
+            // VEUROS company logo
+            Image(
+                painter = painterResource(R.drawable.logo_veuros),
+                contentDescription = "Veuros",
                 modifier = Modifier
-                    .width(200.dp)
-                    .height(1.dp)
-                    .background(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                GlowTeal.copy(alpha = 0.8f),
-                                Color(0xFF3B82F6),
-                                GlowTeal.copy(alpha = 0.8f),
-                                Color.Transparent
-                            )
-                        )
-                    )
+                    .height(70.dp)
+                    .alpha(veurosAlpha)
+                    .scale(veurosScale),
+                contentScale = ContentScale.Fit
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(36.dp))
 
-            // Tagline
-            Text(
-                text = "REDEFINING TECHNOLOGY",
-                style = TextStyle(
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 11.sp,
-                    letterSpacing = 4.sp,
-                    color = Color(0xFF93C5FD).copy(alpha = 0.85f)
-                )
-            )
-
-            Spacer(modifier = Modifier.height(40.dp))
-
-            // Loading dots
-            LoadingDots()
-        }
-    }
-}
-
-@Composable
-private fun LoadingDots() {
-    val infiniteTransition = rememberInfiniteTransition(label = "dots")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        repeat(3) { index ->
-            val alpha by infiniteTransition.animateFloat(
-                initialValue = 0.2f,
-                targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(600, delayMillis = index * 200),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "dot$index"
-            )
-            val scale by infiniteTransition.animateFloat(
-                initialValue = 0.8f,
-                targetValue = 1.2f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(600, delayMillis = index * 200),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "dotScale$index"
-            )
-            Box(
+            // Ribi product logo
+            Image(
+                painter = painterResource(R.drawable.logo_ribi),
+                contentDescription = "Ribi",
                 modifier = Modifier
-                    .size(5.dp)
-                    .scale(scale)
-                    .alpha(alpha)
-                    .background(
-                        color = Color(0xFF38BDF8).copy(alpha = 0.7f),
-                        shape = androidx.compose.foundation.shape.CircleShape
-                    )
+                    .height(42.dp)
+                    .alpha(ribiAlpha)
+                    .offset(y = ribiSlide.dp),
+                contentScale = ContentScale.Fit
             )
         }
+
+        // Bottom tagline
+        Text(
+            text = "PRESENTS",
+            style = TextStyle(
+                fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                color = Color.White.copy(veurosAlpha * 0.25f),
+                letterSpacing = 5.sp
+            ),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 36.dp)
+        )
     }
 }

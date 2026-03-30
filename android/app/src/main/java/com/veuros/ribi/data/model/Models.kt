@@ -29,22 +29,57 @@ enum class FontFamily(val displayName: String, val cssName: String) {
     BOOK("Book", "serif")
 }
 
+enum class TtsVoice(val displayName: String) {
+    FEMALE("Female"),
+    MALE("Male")
+}
+
 // ─── Theme Colors ─────────────────────────────────────────────────────────────
 
 data class ThemeColors(
     val bg: Long,
     val text: Long,
     val accent: Long,
-    val secondary: Long
+    val secondary: Long,
+    /** ColorMatrix values (20 floats) for PDF page rendering. null = no filter */
+    val pdfColorMatrix: FloatArray? = null
 )
 
 object AppThemes {
+    // PDF Color matrices (4x5, row-major, normalized 0-1 range)
+    private val invertMatrix = floatArrayOf(
+        -1f,  0f,  0f, 0f, 1f,   // R
+         0f, -1f,  0f, 0f, 1f,   // G
+         0f,  0f, -1f, 0f, 1f,   // B
+         0f,  0f,  0f, 1f, 0f    // A
+    )
+    private val sepiaMatrix = floatArrayOf(
+        0.393f, 0.769f, 0.189f, 0f, 0f,
+        0.349f, 0.686f, 0.168f, 0f, 0f,
+        0.272f, 0.534f, 0.131f, 0f, 0f,
+        0f,     0f,     0f,     1f, 0f
+    )
+    // Nord: invert with cool blue-gray offset
+    private val nordMatrix = floatArrayOf(
+        -0.88f, 0f, 0f, 0f, 0.925f,
+         0f, -0.88f, 0f, 0f, 0.937f,
+         0f,  0f, -0.88f, 0f, 0.976f,
+         0f,  0f,  0f,  1f, 0f
+    )
+    // Midnight: deep invert, very dark
+    private val midnightMatrix = floatArrayOf(
+        -0.93f, 0f, 0f, 0f, 0.09f,
+         0f, -0.93f, 0f, 0f, 0.09f,
+         0f,  0f, -0.93f, 0f, 0.09f,
+         0f,  0f,  0f,  1f, 0f
+    )
+
     val map = mapOf(
-        AppTheme.LIGHT    to ThemeColors(0xFFFFFFFF, 0xFF1A1A1A, 0xFF3B82F6, 0xFFF3F4F6),
-        AppTheme.DARK     to ThemeColors(0xFF111827, 0xFFF9FAFB, 0xFF60A5FA, 0xFF1F2937),
-        AppTheme.SEPIA    to ThemeColors(0xFFF4ECD8, 0xFF5B4636, 0xFF946B49, 0xFFEAE0C9),
-        AppTheme.NORD     to ThemeColors(0xFF2E3440, 0xFFECEFF4, 0xFF88C0D0, 0xFF3B4252),
-        AppTheme.MIDNIGHT to ThemeColors(0xFF000000, 0xFFE5E7EB, 0xFF8B5CF6, 0xFF111111),
+        AppTheme.LIGHT    to ThemeColors(0xFFFFFFFF, 0xFF1A1A1A, 0xFF3B82F6, 0xFFF3F4F6, null),
+        AppTheme.DARK     to ThemeColors(0xFF111827, 0xFFF9FAFB, 0xFF60A5FA, 0xFF1F2937, invertMatrix),
+        AppTheme.SEPIA    to ThemeColors(0xFFF4ECD8, 0xFF5B4636, 0xFF946B49, 0xFFEAE0C9, sepiaMatrix),
+        AppTheme.NORD     to ThemeColors(0xFF2E3440, 0xFFECEFF4, 0xFF88C0D0, 0xFF3B4252, nordMatrix),
+        AppTheme.MIDNIGHT to ThemeColors(0xFF000000, 0xFFE5E7EB, 0xFF8B5CF6, 0xFF111111, midnightMatrix),
     )
     fun get(theme: AppTheme) = map[theme] ?: map[AppTheme.LIGHT]!!
 }
@@ -84,6 +119,10 @@ data class ReaderSettings(
     val brightness: Float = 1.0f,
     val renderQuality: Int = 2,
     val autoNightMode: Boolean = false,
+    // TTS
+    val ttsEnabled: Boolean = false,
+    val ttsVoice: TtsVoice = TtsVoice.FEMALE,
+    val ttsSpeed: Float = 0.75f,
     val stats: ReadingStats = ReadingStats()
 )
 
@@ -119,8 +158,7 @@ class BookConverters {
     private val gson = Gson()
 
     @TypeConverter
-    fun fromBookmarkList(value: List<Bookmark>): String =
-        gson.toJson(value)
+    fun fromBookmarkList(value: List<Bookmark>): String = gson.toJson(value)
 
     @TypeConverter
     fun toBookmarkList(value: String): List<Bookmark> {
@@ -181,5 +219,9 @@ object BackgroundTracks {
             "https://cdn.pixabay.com/download/audio/2021/08/09/audio_dc39bde808.mp3"),
         MusicTrack("ocean", "Ocean Tides",
             "https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3"),
+        MusicTrack("forest", "Forest Ambience",
+            "https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d2b3c4e5f.mp3"),
+        MusicTrack("piano", "Gentle Piano",
+            "https://cdn.pixabay.com/download/audio/2021/11/15/audio_a1b2c3d4e5.mp3"),
     )
 }

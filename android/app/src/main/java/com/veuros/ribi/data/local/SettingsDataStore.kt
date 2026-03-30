@@ -26,6 +26,10 @@ class SettingsDataStore(private val context: Context) {
         val KEY_BRIGHTNESS      = floatPreferencesKey("brightness")
         val KEY_RENDER_QUALITY  = intPreferencesKey("render_quality")
         val KEY_AUTO_NIGHT_MODE = booleanPreferencesKey("auto_night_mode")
+        // TTS
+        val KEY_TTS_ENABLED     = booleanPreferencesKey("tts_enabled")
+        val KEY_TTS_VOICE       = stringPreferencesKey("tts_voice")
+        val KEY_TTS_SPEED       = floatPreferencesKey("tts_speed")
         // Stats
         val KEY_TOTAL_PAGES     = intPreferencesKey("total_pages")
         val KEY_ACHIEVEMENTS    = stringPreferencesKey("achievements")
@@ -35,6 +39,7 @@ class SettingsDataStore(private val context: Context) {
         val KEY_TOTAL_MINS      = intPreferencesKey("total_mins")
         // Admin
         val KEY_IS_ADMIN_DEVICE = booleanPreferencesKey("is_admin_device")
+        val KEY_IS_GUEST        = booleanPreferencesKey("is_guest")
         // Tips
         val KEY_SEEN_TIP        = booleanPreferencesKey("seen_tip")
     }
@@ -62,12 +67,14 @@ class SettingsDataStore(private val context: Context) {
     }
 
     private fun Preferences.toReaderSettings(): ReaderSettings {
-        val themeStr  = this[KEY_THEME] ?: "LIGHT"
-        val modeStr   = this[KEY_VIEW_MODE] ?: "PAGE"
-        val fontStr   = this[KEY_FONT_FAMILY] ?: "SANS"
-        val theme     = runCatching { AppTheme.valueOf(themeStr) }.getOrDefault(AppTheme.LIGHT)
-        val viewMode  = runCatching { ViewMode.valueOf(modeStr) }.getOrDefault(ViewMode.PAGE)
+        val themeStr   = this[KEY_THEME] ?: "LIGHT"
+        val modeStr    = this[KEY_VIEW_MODE] ?: "PAGE"
+        val fontStr    = this[KEY_FONT_FAMILY] ?: "SANS"
+        val ttsVoiceStr = this[KEY_TTS_VOICE] ?: "FEMALE"
+        val theme      = runCatching { AppTheme.valueOf(themeStr) }.getOrDefault(AppTheme.LIGHT)
+        val viewMode   = runCatching { ViewMode.valueOf(modeStr) }.getOrDefault(ViewMode.PAGE)
         val fontFamily = runCatching { FontFamily.valueOf(fontStr) }.getOrDefault(FontFamily.SANS)
+        val ttsVoice   = runCatching { TtsVoice.valueOf(ttsVoiceStr) }.getOrDefault(TtsVoice.FEMALE)
         val achievements = (this[KEY_ACHIEVEMENTS] ?: "")
             .split(",").filter { it.isNotBlank() }
 
@@ -83,6 +90,9 @@ class SettingsDataStore(private val context: Context) {
             brightness      = this[KEY_BRIGHTNESS] ?: 1.0f,
             renderQuality   = this[KEY_RENDER_QUALITY] ?: 2,
             autoNightMode   = this[KEY_AUTO_NIGHT_MODE] ?: false,
+            ttsEnabled      = this[KEY_TTS_ENABLED] ?: false,
+            ttsVoice        = ttsVoice,
+            ttsSpeed        = this[KEY_TTS_SPEED] ?: 0.75f,
             stats = ReadingStats(
                 totalPagesRead       = this[KEY_TOTAL_PAGES] ?: 0,
                 unlockedAchievements = achievements,
@@ -95,10 +105,14 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val isAdminDevice: Flow<Boolean> = context.dataStore.data.map { it[KEY_IS_ADMIN_DEVICE] ?: false }
-    val seenTip: Flow<Boolean> = context.dataStore.data.map { it[KEY_SEEN_TIP] ?: false }
+    val isGuest: Flow<Boolean>       = context.dataStore.data.map { it[KEY_IS_GUEST] ?: false }
+    val seenTip: Flow<Boolean>       = context.dataStore.data.map { it[KEY_SEEN_TIP] ?: false }
 
     suspend fun setAdminDevice(value: Boolean) {
         context.dataStore.edit { it[KEY_IS_ADMIN_DEVICE] = value }
+    }
+    suspend fun setGuest(value: Boolean) {
+        context.dataStore.edit { it[KEY_IS_GUEST] = value }
     }
     suspend fun setSeenTip() {
         context.dataStore.edit { it[KEY_SEEN_TIP] = true }

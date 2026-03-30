@@ -21,11 +21,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -65,36 +62,38 @@ fun ReaderScreen(
 
     DisposableEffect(Unit) {
         viewModel.loadBook(bookId)
-        val intent = Intent(context, MusicService::class.java)
-        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        try {
+            val intent = Intent(context, MusicService::class.java)
+            context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } catch (_: Exception) {}
         onDispose {
-            context.unbindService(serviceConnection)
+            try { context.unbindService(serviceConnection) } catch (_: Exception) {}
         }
     }
 
     // Sync music
     LaunchedEffect(uiState.settings.backgroundMusic, uiState.settings.volume) {
-        musicService?.playTrack(uiState.settings.backgroundMusic, uiState.settings.volume)
-            ?: run {
-                if (uiState.settings.backgroundMusic != null) {
-                    val intent = Intent(context, MusicService::class.java)
-                    context.startService(intent)
-                }
+        val trackId = uiState.settings.backgroundMusic
+        val vol = uiState.settings.volume
+        musicService?.playTrack(trackId, vol) ?: run {
+            if (trackId != null) {
+                val intent = Intent(context, MusicService::class.java)
+                context.startService(intent)
             }
-    }
-
-    // Auto-scroll
-    LaunchedEffect(uiState.settings.isAutoScrolling, uiState.settings.autoScrollSpeed) {
-        if (uiState.settings.isAutoScrolling && uiState.settings.viewMode == ViewMode.CONTINUOUS) {
-            // Auto scroll is handled in the continuous scroll view
         }
     }
 
     val settings = uiState.settings
     val theme = AppThemes.get(settings.theme)
-    val bgColor    = Color(theme.bg)
-    val textColor  = Color(theme.text)
+    val bgColor     = Color(theme.bg)
+    val textColor   = Color(theme.text)
     val accentColor = Color(theme.accent)
+
+    // Compute PDF color filter from theme — memoized per theme change
+    val pdfColorFilter = remember(settings.theme) {
+        val matrix = AppThemes.get(settings.theme).pdfColorMatrix
+        if (matrix != null) ColorFilter.colorMatrix(ColorMatrix(matrix)) else null
+    }
 
     var showSettings by remember { mutableStateOf(false) }
     var showPageInput by remember { mutableStateOf(false) }
@@ -107,39 +106,15 @@ fun ReaderScreen(
             .background(bgColor)
     ) {
         when {
-            uiState.isLoading -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        CircularProgressIndicator(color = accentColor)
-                        Text("Opening book...", color = textColor.copy(0.6f))
-                    }
-                }
-            }
-            uiState.loadError != null -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(32.dp)) {
-                        Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFEF4444), modifier = Modifier.size(48.dp))
-                        Text("Failed to open book", color = textColor, fontWeight = FontWeight.Bold)
-                        Text(uiState.loadError ?: "", color = textColor.copy(0.6f), fontSize = 13.sp)
-                        Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = accentColor)) {
-                            Text("Go Back")
-                        }
-                    }
-                }
-            }
+            uiState.isLoading -> LoadingView(accentColor, textColor)
+            uiState.loadError != null -> ErrorView(uiState.loadError!!, textColor, accentColor, onBack)
             else -> {
-                // Main PDF view
+                // PDF content area
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { viewModel.showHud() },
-                                onDoubleTap = { viewModel.toggleHud() }
-                            )
+                            detectTapGestures(onTap = { viewModel.showHud() })
                         }
                 ) {
                     if (settings.viewMode == ViewMode.PAGE) {
@@ -149,25 +124,26 @@ fun ReaderScreen(
                             totalPages = uiState.totalPages,
                             brightness = settings.brightness,
                             zoomScale = uiState.zoomScale,
+                            pdfColorFilter = pdfColorFilter,
                             bgColor = bgColor,
                             onSwipeLeft = { viewModel.nextPage() },
-                            onSwipeRight = { viewModel.previousPage() },
-                            onTap = { viewModel.showHud() }
+                            onSwipeRight = { viewModel.previousPage() }
                         )
                     } else {
                         ContinuousScrollView(
                             viewModel = viewModel,
                             uiState = uiState,
                             bgColor = bgColor,
-                            onPageVisible = { page -> viewModel.goToPage(page) }
+                            pdfColorFilter = pdfColorFilter,
+                            onPageVisible = { viewModel.goToPage(it) }
                         )
                     }
 
-                    // HUD overlay
+                    // ── Top HUD ──
                     AnimatedVisibility(
                         visible = uiState.isHudVisible,
-                        enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
-                        exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+                        enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { -it },
+                        exit  = fadeOut(tween(200)) + slideOutVertically(tween(200)) { -it },
                         modifier = Modifier.align(Alignment.TopCenter)
                     ) {
                         ReaderTopBar(
@@ -175,7 +151,6 @@ fun ReaderScreen(
                             currentPage = uiState.currentPage,
                             totalPages = uiState.totalPages,
                             isBookmarked = uiState.isBookmarked,
-                            textColor = textColor,
                             accentColor = accentColor,
                             onBack = onBack,
                             onBookmark = { viewModel.toggleBookmark() },
@@ -184,19 +159,17 @@ fun ReaderScreen(
                         )
                     }
 
-                    // Bottom HUD
+                    // ── Bottom HUD ──
                     AnimatedVisibility(
                         visible = uiState.isHudVisible,
-                        enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-                        exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                        enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { it },
+                        exit  = fadeOut(tween(200)) + slideOutVertically(tween(200)) { it },
                         modifier = Modifier.align(Alignment.BottomCenter)
                     ) {
                         ReaderBottomBar(
                             currentPage = uiState.currentPage,
                             totalPages = uiState.totalPages,
-                            textColor = textColor,
                             accentColor = accentColor,
-                            bgColor = bgColor,
                             onPageChange = { viewModel.goToPage(it) },
                             onZoomIn = { viewModel.zoomIn() },
                             onZoomOut = { viewModel.zoomOut() },
@@ -208,21 +181,36 @@ fun ReaderScreen(
                         )
                     }
 
-                    // TOC overlay
+                    // ── TTS Bar ──
+                    AnimatedVisibility(
+                        visible = settings.ttsEnabled,
+                        enter = fadeIn() + slideInVertically { it / 2 },
+                        exit  = fadeOut() + slideOutVertically { it / 2 },
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
+                    ) {
+                        TtsBar(
+                            isSpeaking = uiState.isTtsSpeaking,
+                            voice = settings.ttsVoice,
+                            error = uiState.ttsError,
+                            accentColor = accentColor,
+                            onPlay = { viewModel.speakCurrentPage() },
+                            onStop = { viewModel.stopTts() },
+                            onDismissError = { viewModel.dismissTtsError() }
+                        )
+                    }
+
+                    // ── TOC Panel ──
                     AnimatedVisibility(
                         visible = uiState.showToc,
-                        enter = slideInHorizontally(initialOffsetX = { it }),
-                        exit = slideOutHorizontally(targetOffsetX = { it }),
+                        enter = slideInHorizontally(tween(300)) { it },
+                        exit  = slideOutHorizontally(tween(250)) { it },
                         modifier = Modifier.align(Alignment.CenterEnd)
                     ) {
                         TocPanel(
                             toc = uiState.toc,
                             bgColor = bgColor, textColor = textColor, accentColor = accentColor,
                             onClose = { viewModel.toggleToc() },
-                            onItemClick = { page ->
-                                viewModel.goToPage(page)
-                                viewModel.toggleToc()
-                            }
+                            onItemClick = { page -> viewModel.goToPage(page); viewModel.toggleToc() }
                         )
                     }
                 }
@@ -231,10 +219,7 @@ fun ReaderScreen(
 
         // Achievement toast
         Box(modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp)) {
-            AchievementToast(
-                achievement = uiState.newAchievement,
-                onDismiss = viewModel::dismissAchievement
-            )
+            AchievementToast(achievement = uiState.newAchievement, onDismiss = viewModel::dismissAchievement)
         }
     }
 
@@ -246,24 +231,20 @@ fun ReaderScreen(
             containerColor = bgColor
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding()
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Settings", color = textColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Reading Settings", color = textColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     IconButton(onClick = { showSettings = false }) {
-                        Icon(Icons.Default.Close, null, tint = textColor.copy(0.6f))
+                        Icon(Icons.Default.Close, null, tint = textColor.copy(0.5f))
                     }
                 }
                 SettingsPanel(
-                    settings = uiState.settings,
+                    settings = settings,
                     bgColor = bgColor, textColor = textColor, accentColor = accentColor,
                     onThemeChange = viewModel::updateTheme,
                     onViewModeChange = viewModel::updateViewMode,
@@ -272,7 +253,10 @@ fun ReaderScreen(
                     onAutoNightModeChange = viewModel::updateAutoNightMode,
                     onAutoScrollChange = viewModel::updateAutoScroll,
                     onMusicChange = viewModel::updateMusic,
-                    onVolumeChange = viewModel::updateVolume
+                    onVolumeChange = viewModel::updateVolume,
+                    onTtsEnabledChange = viewModel::updateTtsEnabled,
+                    onTtsVoiceChange = viewModel::updateTtsVoice,
+                    onTtsSpeedChange = viewModel::updateTtsSpeed
                 )
                 Spacer(Modifier.height(16.dp))
             }
@@ -283,8 +267,7 @@ fun ReaderScreen(
     if (showPageInput) {
         AlertDialog(
             onDismissRequest = { showPageInput = false },
-            containerColor = bgColor,
-            titleContentColor = textColor,
+            containerColor = bgColor, titleContentColor = textColor,
             title = { Text("Go to Page") },
             text = {
                 OutlinedTextField(
@@ -292,12 +275,9 @@ fun ReaderScreen(
                     onValueChange = { pageInputText = it.filter { c -> c.isDigit() } },
                     label = { Text("Page (1–${uiState.totalPages})") },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accentColor,
-                        unfocusedBorderColor = textColor.copy(0.3f),
-                        focusedTextColor = textColor,
-                        unfocusedTextColor = textColor,
-                        cursorColor = accentColor,
-                        focusedLabelColor = accentColor,
+                        focusedBorderColor = accentColor, unfocusedBorderColor = textColor.copy(0.3f),
+                        focusedTextColor = textColor, unfocusedTextColor = textColor,
+                        cursorColor = accentColor, focusedLabelColor = accentColor,
                         unfocusedLabelColor = textColor.copy(0.5f)
                     )
                 )
@@ -306,9 +286,7 @@ fun ReaderScreen(
                 TextButton(onClick = {
                     pageInputText.toIntOrNull()?.let { viewModel.goToPage(it) }
                     showPageInput = false
-                }) {
-                    Text("Go", color = accentColor, fontWeight = FontWeight.Bold)
-                }
+                }) { Text("Go", color = accentColor, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(onClick = { showPageInput = false }) {
@@ -319,7 +297,37 @@ fun ReaderScreen(
     }
 }
 
-// ─── Page Mode View ───────────────────────────────────────────────────────────
+// ─── Loading ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun LoadingView(accentColor: Color, textColor: Color) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            CircularProgressIndicator(color = accentColor, strokeWidth = 3.dp)
+            Text("Opening book…", color = textColor.copy(0.6f), fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun ErrorView(error: String, textColor: Color, accentColor: Color, onBack: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(32.dp)
+        ) {
+            Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFEF4444), modifier = Modifier.size(52.dp))
+            Text("Couldn't open book", color = textColor, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text(error, color = textColor.copy(0.6f), fontSize = 13.sp)
+            Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = accentColor)) {
+                Text("Go Back")
+            }
+        }
+    }
+}
+
+// ─── Page Mode ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun PageModeView(
@@ -328,14 +336,16 @@ private fun PageModeView(
     totalPages: Int,
     brightness: Float,
     zoomScale: Float,
+    pdfColorFilter: ColorFilter?,
     bgColor: Color,
     onSwipeLeft: () -> Unit,
-    onSwipeRight: () -> Unit,
-    onTap: () -> Unit
+    onSwipeRight: () -> Unit
 ) {
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    val animatedOffsetX by animateFloatAsState(
-        targetValue = offsetX, animationSpec = spring(), label = "swipe"
+    var dragX by remember { mutableFloatStateOf(0f) }
+    val animDragX by animateFloatAsState(
+        targetValue = dragX,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "drag"
     )
 
     Box(
@@ -346,122 +356,92 @@ private fun PageModeView(
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         when {
-                            offsetX < -100f -> { onSwipeLeft(); offsetX = 0f }
-                            offsetX > 100f  -> { onSwipeRight(); offsetX = 0f }
-                            else            -> { offsetX = 0f }
+                            dragX < -80f -> { onSwipeLeft();  dragX = 0f }
+                            dragX >  80f -> { onSwipeRight(); dragX = 0f }
+                            else         -> { dragX = 0f }
                         }
                     }
-                ) { _, dragAmount ->
-                    offsetX += dragAmount
-                }
+                ) { _, delta -> dragX = (dragX + delta).coerceIn(-300f, 300f) }
             }
-            .graphicsLayer { translationX = animatedOffsetX },
+            .graphicsLayer { translationX = animDragX },
         contentAlignment = Alignment.Center
     ) {
-        if (renderedPage != null && !renderedPage.isRecycled) {
-            androidx.compose.foundation.Image(
-                bitmap = renderedPage.asImageBitmap(),
-                contentDescription = "Page $currentPage",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = zoomScale
-                        scaleY = zoomScale
-                    }
-            )
-        } else {
-            CircularProgressIndicator(color = Color(0xFF3B82F6))
+        AnimatedContent(
+            targetState = renderedPage,
+            transitionSpec = {
+                fadeIn(tween(180)) togetherWith fadeOut(tween(120))
+            },
+            label = "page_anim"
+        ) { bitmap ->
+            if (bitmap != null && !bitmap.isRecycled) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Page $currentPage",
+                    contentScale = ContentScale.Fit,
+                    colorFilter = pdfColorFilter,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { scaleX = zoomScale; scaleY = zoomScale }
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(bgColor), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF3B82F6))
+                }
+            }
         }
     }
 }
 
-// ─── Continuous Scroll View ───────────────────────────────────────────────────
+// ─── Continuous Scroll ────────────────────────────────────────────────────────
 
 @Composable
 private fun ContinuousScrollView(
     viewModel: ReaderViewModel,
     uiState: ReaderUiState,
     bgColor: Color,
+    pdfColorFilter: ColorFilter?,
     onPageVisible: (Int) -> Unit
 ) {
     val lazyListState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
 
     // Auto-scroll
     LaunchedEffect(uiState.settings.isAutoScrolling, uiState.settings.autoScrollSpeed) {
-        if (uiState.settings.isAutoScrolling && uiState.settings.autoScrollSpeed > 0) {
-            while (true) {
-                val scrollPx = (uiState.settings.autoScrollSpeed * 0.5f).toInt()
-                lazyListState.scrollBy(scrollPx.toFloat())
-                delay(16L)
-            }
+        while (uiState.settings.isAutoScrolling && uiState.settings.autoScrollSpeed > 0) {
+            lazyListState.scrollBy(uiState.settings.autoScrollSpeed * 0.6f)
+            delay(16L)
         }
     }
 
-    // Track visible page
     LaunchedEffect(lazyListState.firstVisibleItemIndex) {
-        val visiblePage = lazyListState.firstVisibleItemIndex + 1
-        onPageVisible(visiblePage)
+        onPageVisible(lazyListState.firstVisibleItemIndex + 1)
     }
+
+    val renderedPage by viewModel.renderedPage.collectAsState()
 
     LazyColumn(
         state = lazyListState,
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = uiState.settings.brightness },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         contentPadding = PaddingValues(vertical = 56.dp)
     ) {
-        items(uiState.totalPages) { index ->
-            val pageNum = index + 1
-            SinglePageItem(
-                pageNumber = pageNum,
-                viewModel = viewModel,
-                brightness = uiState.settings.brightness,
-                zoomScale = uiState.zoomScale
-            )
-        }
-    }
-}
-
-@Composable
-private fun SinglePageItem(
-    pageNumber: Int,
-    viewModel: ReaderViewModel,
-    brightness: Float,
-    zoomScale: Float
-) {
-    val renderedPage by viewModel.renderedPage.collectAsState()
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp)
-            .graphicsLayer { alpha = brightness },
-        contentAlignment = Alignment.Center
-    ) {
-        // We only show the currently rendered page in continuous mode for simplicity
-        // A production app would implement per-page rendering
-        if (renderedPage != null && !renderedPage!!.isRecycled) {
-            androidx.compose.foundation.Image(
-                bitmap = renderedPage!!.asImageBitmap(),
-                contentDescription = "Page $pageNumber",
-                contentScale = ContentScale.FillWidth,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        scaleX = zoomScale
-                        scaleY = zoomScale
+        items(uiState.totalPages, key = { it }) { index ->
+            if (renderedPage != null && !renderedPage!!.isRecycled) {
+                Image(
+                    bitmap = renderedPage!!.asImageBitmap(),
+                    contentDescription = "Page ${index + 1}",
+                    contentScale = ContentScale.FillWidth,
+                    colorFilter = pdfColorFilter,
+                    modifier = Modifier.fillMaxWidth().graphicsLayer {
+                        scaleX = uiState.zoomScale; scaleY = uiState.zoomScale
                     }
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(500.dp)
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("$pageNumber", color = Color.Gray.copy(0.4f), fontSize = 14.sp)
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(480.dp).background(bgColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("${index + 1}", color = Color.Gray.copy(0.3f), fontSize = 12.sp)
+                }
             }
         }
     }
@@ -475,7 +455,6 @@ private fun ReaderTopBar(
     currentPage: Int,
     totalPages: Int,
     isBookmarked: Boolean,
-    textColor: Color,
     accentColor: Color,
     onBack: () -> Unit,
     onBookmark: () -> Unit,
@@ -486,12 +465,10 @@ private fun ReaderTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                Brush.verticalGradient(
-                    colors = listOf(Color.Black.copy(0.6f), Color.Transparent)
-                )
+                Brush.verticalGradient(listOf(Color.Black.copy(0.72f), Color.Transparent))
             )
             .systemBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack) {
@@ -504,12 +481,12 @@ private fun ReaderTopBar(
             fontSize = 15.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
         )
         Text(
-            text = "$currentPage / $totalPages",
-            color = Color.White.copy(0.7f),
-            fontSize = 12.sp
+            "$currentPage/$totalPages",
+            color = Color.White.copy(0.65f),
+            fontSize = 11.sp
         )
         IconButton(onClick = onBookmark) {
             Icon(
@@ -519,7 +496,7 @@ private fun ReaderTopBar(
             )
         }
         IconButton(onClick = onToc) {
-            Icon(Icons.Default.List, null, tint = Color.White.copy(0.7f))
+            Icon(Icons.Default.FormatListBulleted, null, tint = Color.White.copy(0.7f))
         }
         IconButton(onClick = onSettings) {
             Icon(Icons.Default.Tune, null, tint = Color.White.copy(0.7f))
@@ -533,9 +510,7 @@ private fun ReaderTopBar(
 private fun ReaderBottomBar(
     currentPage: Int,
     totalPages: Int,
-    textColor: Color,
     accentColor: Color,
-    bgColor: Color,
     onPageChange: (Int) -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
@@ -545,20 +520,13 @@ private fun ReaderBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color.Black.copy(0.7f))
-                )
-            )
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.75f))))
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Page slider
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        // Slider row
+        Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { onPageChange(currentPage - 1) }, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Default.ChevronLeft, null, tint = Color.White, modifier = Modifier.size(20.dp))
             }
@@ -570,7 +538,7 @@ private fun ReaderBottomBar(
                 colors = SliderDefaults.colors(
                     thumbColor = accentColor,
                     activeTrackColor = accentColor,
-                    inactiveTrackColor = Color.White.copy(0.3f)
+                    inactiveTrackColor = Color.White.copy(0.25f)
                 )
             )
             IconButton(onClick = { onPageChange(currentPage + 1) }, modifier = Modifier.size(32.dp)) {
@@ -579,48 +547,112 @@ private fun ReaderBottomBar(
         }
 
         // Tools row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Zoom controls
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                SmallIconButton(Icons.Default.ZoomOut, "Zoom out") { onZoomOut() }
-                SmallIconButton(Icons.Default.ZoomIn, "Zoom in") { onZoomIn() }
-                SmallIconButton(Icons.Default.FitScreen, "Reset zoom") { onResetZoom() }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                CircleIconBtn(Icons.Default.ZoomOut) { onZoomOut() }
+                CircleIconBtn(Icons.Default.ZoomIn)  { onZoomIn() }
+                CircleIconBtn(Icons.Default.FitScreen) { onResetZoom() }
             }
-
-            // Page input
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color.White.copy(0.15f))
+                    .background(Color.White.copy(0.12f))
                     .clickable(onClick = onPageInputTap)
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
-                Text(
-                    text = "$currentPage / $totalPages",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Text("$currentPage / $totalPages", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
 }
 
 @Composable
-private fun SmallIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, onClick: () -> Unit) {
+private fun CircleIconBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.size(32.dp).clip(CircleShape).background(Color.White.copy(0.12f)).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+}
+
+// ─── TTS Bar ─────────────────────────────────────────────────────────────────
+
+@Composable
+private fun TtsBar(
+    isSpeaking: Boolean,
+    voice: TtsVoice,
+    error: String?,
+    accentColor: Color,
+    onPlay: () -> Unit,
+    onStop: () -> Unit,
+    onDismissError: () -> Unit
+) {
     Box(
         modifier = Modifier
-            .size(32.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(0.15f))
-            .clickable(onClick = onClick),
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, desc, tint = Color.White, modifier = Modifier.size(16.dp))
+        Surface(
+            shape = RoundedCornerShape(40.dp),
+            color = Color.Black.copy(0.82f),
+            shadowElevation = 8.dp
+        ) {
+            if (error != null) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = Color(0xFFF59E0B), modifier = Modifier.size(14.dp))
+                    Text(error, color = Color.White.copy(0.8f), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismissError, modifier = Modifier.size(20.dp)) {
+                        Icon(Icons.Default.Close, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(12.dp))
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val voiceIcon = if (voice == TtsVoice.FEMALE) Icons.Default.RecordVoiceOver else Icons.Default.VoiceChat
+                    Icon(voiceIcon, null, tint = accentColor, modifier = Modifier.size(16.dp))
+                    Text(
+                        text = if (isSpeaking) "Reading…" else "Read aloud",
+                        color = Color.White.copy(0.8f),
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    // TTS speaking wave animation
+                    if (isSpeaking) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "wave")
+                        val heights = (1..4).map { i ->
+                            infiniteTransition.animateFloat(
+                                initialValue = 3f, targetValue = 14f,
+                                animationSpec = infiniteRepeatable(
+                                    tween(300 + i * 80, easing = FastOutSlowInEasing),
+                                    RepeatMode.Reverse
+                                ), label = "h$i"
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            heights.forEach { h ->
+                                Box(modifier = Modifier.width(3.dp).height(h.value.dp).clip(RoundedCornerShape(2.dp)).background(accentColor))
+                            }
+                        }
+                    }
+                    IconButton(
+                        onClick = if (isSpeaking) onStop else onPlay,
+                        modifier = Modifier.size(36.dp).clip(CircleShape).background(accentColor)
+                    ) {
+                        Icon(
+                            if (isSpeaking) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            null, tint = Color.White, modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -634,9 +666,9 @@ private fun TocPanel(
     onItemClick: (Int) -> Unit
 ) {
     Surface(
-        modifier = Modifier.fillMaxHeight().width(280.dp),
-        color = bgColor,
-        shadowElevation = 16.dp
+        modifier = Modifier.fillMaxHeight().width(270.dp),
+        color = bgColor.copy(0.97f),
+        shadowElevation = 20.dp
     ) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
             Row(
@@ -646,29 +678,27 @@ private fun TocPanel(
             ) {
                 Text("Contents", color = textColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, null, tint = textColor.copy(0.6f))
+                    Icon(Icons.Default.Close, null, tint = textColor.copy(0.5f))
                 }
             }
+            HorizontalDivider(color = textColor.copy(0.08f))
             if (toc.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No table of contents", color = textColor.copy(0.4f), fontSize = 13.sp)
+                    Text("No table of contents", color = textColor.copy(0.35f), fontSize = 13.sp)
                 }
             } else {
-                LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp)) {
+                LazyColumn(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
                     items(toc.size) { i ->
                         val item = toc[i]
                         Text(
                             text = item.title,
-                            color = textColor.copy(if (item.level == 0) 1f else 0.7f),
+                            color = textColor.copy(if (item.level == 0) 0.9f else 0.65f),
                             fontSize = if (item.level == 0) 14.sp else 13.sp,
                             fontWeight = if (item.level == 0) FontWeight.SemiBold else FontWeight.Normal,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onItemClick(item.page) }
-                                .padding(
-                                    start = (8 + item.level * 12).dp,
-                                    top = 10.dp, bottom = 10.dp
-                                )
+                                .padding(start = (8 + item.level * 12).dp, top = 10.dp, bottom = 10.dp)
                         )
                     }
                 }

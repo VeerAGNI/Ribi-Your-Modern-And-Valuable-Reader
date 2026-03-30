@@ -65,6 +65,17 @@ class SettingsRepository @Inject constructor(
         dataStore.updateSettings { it[SettingsDataStore.KEY_VOLUME] = volume }
     }
 
+    suspend fun updateTts(enabled: Boolean, voice: TtsVoice, speed: Float) {
+        dataStore.updateSettings {
+            it[SettingsDataStore.KEY_TTS_ENABLED] = enabled
+            it[SettingsDataStore.KEY_TTS_VOICE]   = voice.name
+            it[SettingsDataStore.KEY_TTS_SPEED]   = speed
+        }
+    }
+
+    suspend fun setGuest(value: Boolean) = dataStore.setGuest(value)
+    val isGuest = dataStore.isGuest
+
     suspend fun updateStats(stats: ReadingStats) {
         dataStore.updateStats(stats)
         syncToFirestore()
