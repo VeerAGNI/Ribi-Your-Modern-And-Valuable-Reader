@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
 import { auth } from '../firebase';
-import { BookOpen, Lock, Mail, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { BookOpen, Lock, Mail, Eye, EyeOff, AlertCircle, UserX } from 'lucide-react';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL as string | undefined;
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD as string | undefined;
@@ -36,6 +36,18 @@ export const AuthScreen: React.FC = () => {
       if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
         setError('Sign-in failed. Please try again.');
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGuestLogin = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await signInAnonymously(auth);
+    } catch {
+      setError('Could not start guest session. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -217,7 +229,36 @@ export const AuthScreen: React.FC = () => {
             {loading ? 'Signing in…' : 'Continue with Google'}
           </button>
 
-          <div className="mt-8 pt-5 text-xs" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'rgba(100,116,139,0.8)' }}>
+          {/* Divider */}
+          <div className="flex items-center gap-3 my-4">
+            <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
+            <span className="text-xs" style={{ color: 'rgba(100,116,139,0.7)' }}>or</span>
+            <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
+          </div>
+
+          {/* Guest login */}
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={handleGuestLogin}
+            disabled={loading}
+            className="w-full py-3.5 px-6 font-medium rounded-2xl transition-all duration-300 flex items-center justify-center gap-2.5 disabled:opacity-40"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              color: 'rgba(148,163,184,0.9)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            }}
+          >
+            <UserX size={17} />
+            {loading ? 'Starting…' : 'Continue as Guest'}
+          </motion.button>
+
+          <p className="mt-3 text-[11px]" style={{ color: 'rgba(100,116,139,0.55)' }}>
+            Guest data is stored locally and not synced across devices.
+          </p>
+
+          <div className="mt-6 pt-5 text-xs" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'rgba(100,116,139,0.8)' }}>
             <p>© 2024 Veuros. All rights reserved.</p>
             <p className="mt-1.5 font-medium"
               style={{ background: 'linear-gradient(90deg, #fde68a, #f59e0b, #f97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>

@@ -9,11 +9,11 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { AchievementToast } from './components/AchievementToast';
 import { BookMetadata, ReaderSettings, Bookmark, ReadingStats } from './types';
 import { DEFAULT_SETTINGS, THEMES, ACHIEVEMENTS, STREAK_ACHIEVEMENTS, BACKGROUND_TRACKS } from './constants';
-import { Book, Settings, Library as LibraryIcon, Bookmark as BookmarkIcon, ChevronLeft, X, LogOut, Info } from 'lucide-react';
+import { Book, Settings, Library as LibraryIcon, Bookmark as BookmarkIcon, ChevronLeft, X, LogOut, Info, UserX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { auth, db } from './firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, User, signOut, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import localforage from 'localforage';
 import { Howl } from 'howler';
@@ -67,6 +67,7 @@ function MeshBackground({ theme }: { theme: string }) {
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
+  const [guestBannerDismissed, setGuestBannerDismissed] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [books, setBooks] = useState<BookMetadata[]>([]);
@@ -142,9 +143,9 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Firestore sync
+  // Firestore sync — skipped for anonymous guest users
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.isAnonymous) return;
     const settingsDocRef = doc(db, 'users', user.uid, 'settings', 'reader');
     const unsubSettings = onSnapshot(settingsDocRef, snap => {
       if (snap.exists()) {
@@ -182,9 +183,9 @@ export default function App() {
   }, [activeBookId, activeFile]);
 
   const updateSettings = useCallback(async (updates: Partial<ReaderSettings>) => {
-    if (!user) { setSettings(s => ({ ...s, ...updates })); return; }
     const newSettings = { ...settingsRef.current, ...updates };
     setSettings(newSettings);
+    if (!user || user.isAnonymous) return; // guests: local state only
     try {
       await setDoc(doc(db, 'users', user.uid, 'settings', 'reader'), { ...newSettings, uid: user.uid }, { merge: true });
     } catch (e) {
@@ -241,7 +242,12 @@ export default function App() {
 
     try {
       await localforage.setItem(`pdf_${newBook.id}`, file);
-      if (user) await setDoc(doc(db, 'users', user.uid, 'books', newBook.id), { ...newBook, uid: user.uid });
+      if (user && !user.isAnonymous) {
+        await setDoc(doc(db, 'users', user.uid, 'books', newBook.id), { ...newBook, uid: user.uid });
+      } else {
+        // Guest: keep books only in local React state
+        setBooks(prev => [...prev, newBook]);
+      }
       setActiveBookId(newBook.id);
       setActiveFile(file);
       setSidebarOpen(false);
@@ -258,7 +264,7 @@ export default function App() {
   const handleSelectBook = async (id: string) => {
     setActiveBookId(id);
     setSidebarOpen(false);
-    if (user) {
+    if (user && !user.isAnonymous) {
       const book = books.find(b => b.id === id);
       if (book) {
         setDoc(doc(db, 'users', user.uid, 'books', id), { ...book, lastRead: Date.now(), uid: user.uid }, { merge: true })
@@ -279,14 +285,18 @@ export default function App() {
     if (activeBookId === id) { setActiveBookId(null); setActiveFile(null); }
     try {
       await localforage.removeItem(`pdf_${id}`);
-      if (user) await deleteDoc(doc(db, 'users', user.uid, 'books', id));
+      if (user && !user.isAnonymous) {
+        await deleteDoc(doc(db, 'users', user.uid, 'books', id));
+      } else {
+        setBooks(prev => prev.filter(b => b.id !== id));
+      }
     } catch (err) {
       console.error('Error deleting book:', err);
     }
   };
 
   const handlePageChange = useCallback(async (page: number) => {
-    if (!activeBookId || !user) return;
+    if (!activeBookId) return;
     const book = books.find(b => b.id === activeBookId);
     if (!book) return;
 
@@ -294,11 +304,13 @@ export default function App() {
     const maxPageReached = Math.max(prevMax, page);
     const pagesReadDiff = maxPageReached - prevMax;
 
-    // Optimistic local update so that re-opening the book immediately shows the
-    // correct page (instead of waiting for Firestore onSnapshot to propagate)
+    // Always update local state immediately (fixes last-page-not-restored bug)
     setBooks(prev => prev.map(b =>
       b.id === activeBookId ? { ...b, currentPage: page, maxPageReached, lastRead: Date.now() } : b
     ));
+
+    // Guest users: local only, no Firestore
+    if (!user || user.isAnonymous) return;
 
     setDoc(doc(db, 'users', user.uid, 'books', activeBookId), { ...book, currentPage: page, maxPageReached, uid: user.uid }, { merge: true })
       .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
@@ -378,13 +390,17 @@ export default function App() {
   }, [activeBookId, user, books, updateSettings]);
 
   const toggleBookmark = async (page: number) => {
-    if (!activeBookId || !user) return;
+    if (!activeBookId) return;
     const book = books.find(b => b.id === activeBookId);
     if (!book) return;
     const exists = book.bookmarks.find(bm => bm.pageNumber === page);
     const newBookmarks = exists
       ? book.bookmarks.filter(bm => bm.pageNumber !== page)
       : [...book.bookmarks, { id: Math.random().toString(36).slice(2, 9), pageNumber: page, label: `Page ${page}`, timestamp: Date.now() }];
+    // Update local state for everyone (guests and signed-in)
+    setBooks(prev => prev.map(b => b.id === activeBookId ? { ...b, bookmarks: newBookmarks } : b));
+    // Persist to Firestore only for signed-in users
+    if (!user || user.isAnonymous) return;
     setDoc(doc(db, 'users', user.uid, 'books', activeBookId), { ...book, bookmarks: newBookmarks, uid: user.uid }, { merge: true })
       .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
   };
@@ -405,6 +421,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.autoNightMode]);
 
+  const isGuest = user?.isAnonymous ?? false;
   const activeBook = books.find(b => b.id === activeBookId);
   const currentTheme = THEMES[settings.theme];
   const streak = settings.stats?.streak || 0;
@@ -432,6 +449,53 @@ export default function App() {
         <MeshBackground theme={settings.theme} />
 
         <AchievementToast achievement={currentAchievement} onClose={handleAchievementClose} />
+
+        {/* Guest mode banner */}
+        <AnimatePresence>
+          {isGuest && !guestBannerDismissed && (
+            <motion.div
+              initial={{ opacity: 0, y: -48 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -48 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+              className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-2.5 text-sm"
+              style={{
+                background: 'rgba(15,15,25,0.82)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <div className="flex items-center gap-2" style={{ color: 'rgba(148,163,184,0.9)' }}>
+                <UserX size={15} className="shrink-0" />
+                <span>You're in guest mode — data is local only.</span>
+              </div>
+              <div className="flex items-center gap-2 ml-4">
+                <button
+                  onClick={async () => {
+                    try {
+                      await signInWithPopup(auth, new GoogleAuthProvider());
+                    } catch {
+                      /* user closed popup */
+                    }
+                  }}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
+                  style={{ background: 'rgba(255,255,255,0.12)', color: '#fff' }}
+                >
+                  Sign in
+                </button>
+                <button
+                  onClick={() => setGuestBannerDismissed(true)}
+                  className="p-1 rounded-lg transition-all"
+                  style={{ color: 'rgba(100,116,139,0.7)' }}
+                  aria-label="Dismiss"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Sidebar toggle */}
         <motion.button

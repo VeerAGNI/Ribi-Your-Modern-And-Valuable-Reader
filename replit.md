@@ -20,6 +20,12 @@ A beautiful, feature-rich PDF reader built as both a React web app and a native 
 - Admin env vars: `VITE_ADMIN_EMAIL`, `VITE_ADMIN_PASSWORD` (see .env.example)
 - Max PDF size: 40 MB
 
+### Auth Modes
+- **Google Sign-In**: full cloud sync via Firestore
+- **Guest Mode**: Firebase Anonymous Auth (`signInAnonymously`); all data stays in localforage/React state, Firestore is never touched; a dismissible banner at the top offers to upgrade to Google sign-in; guest books, bookmarks, settings and page progress are fully functional locally
+  - Requires "Anonymous" provider enabled in Firebase Console → Authentication → Sign-in methods
+- **Admin Mode**: tap logo 5× on AuthScreen → hidden email/password panel (auto-fills from env vars)
+
 ---
 
 ## Android App (Kotlin + Jetpack Compose)
