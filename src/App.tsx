@@ -45,6 +45,26 @@ function yesterdayStr() {
   return new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 }
 
+// ── Animated mesh-gradient background ────────────────────────────────────────
+const MESH_COLORS: Record<string, [string, string, string]> = {
+  light:    ['rgba(59,130,246,0.15)',  'rgba(139,92,246,0.11)', 'rgba(6,182,212,0.10)'],
+  dark:     ['rgba(29,78,216,0.22)',   'rgba(109,40,217,0.18)', 'rgba(8,145,178,0.16)'],
+  sepia:    ['rgba(180,83,9,0.14)',    'rgba(146,104,73,0.12)', 'rgba(217,119,6,0.10)'],
+  nord:     ['rgba(37,99,235,0.18)',   'rgba(88,28,135,0.15)',  'rgba(14,116,144,0.14)'],
+  midnight: ['rgba(109,40,217,0.28)',  'rgba(49,46,129,0.22)', 'rgba(15,23,42,0.18)'],
+};
+
+function MeshBackground({ theme }: { theme: string }) {
+  const [c1, c2, c3] = MESH_COLORS[theme] ?? MESH_COLORS.dark;
+  return (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none z-0" aria-hidden>
+      <div className="mesh-orb mesh-orb-1" style={{ width: '70vw', height: '70vw', top: '-25%', left: '-15%', background: c1 }} />
+      <div className="mesh-orb mesh-orb-2" style={{ width: '55vw', height: '55vw', top: '20%', right: '-20%', background: c2 }} />
+      <div className="mesh-orb mesh-orb-3" style={{ width: '50vw', height: '50vw', bottom: '-20%', left: '20%', background: c3 }} />
+    </div>
+  );
+}
+
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [user, setUser] = useState<User | null>(null);
@@ -274,6 +294,12 @@ export default function App() {
     const maxPageReached = Math.max(prevMax, page);
     const pagesReadDiff = maxPageReached - prevMax;
 
+    // Optimistic local update so that re-opening the book immediately shows the
+    // correct page (instead of waiting for Firestore onSnapshot to propagate)
+    setBooks(prev => prev.map(b =>
+      b.id === activeBookId ? { ...b, currentPage: page, maxPageReached, lastRead: Date.now() } : b
+    ));
+
     setDoc(doc(db, 'users', user.uid, 'books', activeBookId), { ...book, currentPage: page, maxPageReached, uid: user.uid }, { merge: true })
       .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
 
@@ -399,17 +425,25 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div
-        className="flex h-screen w-screen overflow-hidden font-sans transition-colors duration-500"
+        className="flex h-screen w-screen overflow-hidden font-sans transition-colors duration-500 relative"
         style={{ backgroundColor: currentTheme.bg, color: currentTheme.text }}
       >
+        {/* Animated mesh-gradient background */}
+        <MeshBackground theme={settings.theme} />
+
         <AchievementToast achievement={currentAchievement} onClose={handleAchievementClose} />
 
         {/* Sidebar toggle */}
         <motion.button
-          whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+          whileHover={{ scale: 1.07 }} whileTap={{ scale: 0.93 }}
           onClick={() => setSidebarOpen(true)}
-          className="fixed top-5 left-5 z-40 p-3 rounded-2xl backdrop-blur-xl border shadow-xl transition-all"
-          style={{ color: currentTheme.text, background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.12)', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
+          className="fixed top-5 left-5 z-40 p-3 rounded-2xl glass border shadow-xl transition-all"
+          style={{
+            color: currentTheme.text,
+            background: `${currentTheme.bg}b0`,
+            borderColor: `${currentTheme.text}14`,
+            boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 0 0 1px ${currentTheme.accent}10`,
+          }}
         >
           <LibraryIcon size={22} />
         </motion.button>
@@ -418,10 +452,10 @@ export default function App() {
         {activeBookId && (
           <motion.button
             initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }}
-            whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+            whileHover={{ scale: 1.07 }} whileTap={{ scale: 0.93 }}
             onClick={() => { setActiveBookId(null); setActiveFile(null); }}
-            className="fixed top-5 right-5 z-40 p-3 rounded-2xl backdrop-blur-xl border shadow-xl transition-all text-red-400 hover:text-red-300"
-            style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.15)' }}
+            className="fixed top-5 right-5 z-40 p-3 rounded-2xl glass border shadow-xl transition-all text-red-400 hover:text-red-300"
+            style={{ background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.2)', boxShadow: '0 8px 32px rgba(239,68,68,0.12)' }}
             title="Close book"
           >
             <X size={22} />
@@ -471,16 +505,19 @@ export default function App() {
                   Ribi Missed You.
                 </p>
 
-                {/* Duolingo-style streak card */}
+                {/* Streak card — glassmorphic */}
                 <div
-                  className="mx-auto mb-8 px-6 py-5 rounded-3xl flex items-center gap-5 max-w-sm"
+                  className="mx-auto mb-8 px-6 py-5 rounded-3xl flex items-center gap-5 max-w-sm glass glass-card"
                   style={{
                     background: streak > 0
-                      ? 'linear-gradient(135deg, rgba(251,146,60,0.15), rgba(249,115,22,0.08))'
-                      : `${currentTheme.secondary}`,
+                      ? 'linear-gradient(135deg, rgba(251,146,60,0.14), rgba(249,115,22,0.07))'
+                      : `${currentTheme.secondary}cc`,
                     border: streak > 0
-                      ? '1px solid rgba(251,146,60,0.3)'
+                      ? '1px solid rgba(251,146,60,0.28)'
                       : `1px solid ${currentTheme.text}10`,
+                    boxShadow: streak > 0
+                      ? '0 8px 32px rgba(251,146,60,0.12)'
+                      : `0 4px 24px rgba(0,0,0,0.08)`,
                   }}
                 >
                   <div className="text-5xl select-none" style={{ filter: streak === 0 ? 'grayscale(1) opacity(0.3)' : 'none' }}>
@@ -518,24 +555,33 @@ export default function App() {
 
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
                   {books.length > 0 && (
-                    <button
+                    <motion.button
+                      whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
                       onClick={() => {
                         const last = [...books].sort((a, b) => b.lastRead - a.lastRead)[0];
                         if (last) handleSelectBook(last.id);
                       }}
-                      className="px-8 py-4 text-white rounded-2xl font-bold shadow-xl transition-all w-full sm:w-auto active:scale-95"
-                      style={{ background: currentTheme.accent, boxShadow: `0 12px 30px ${currentTheme.accent}40` }}
+                      className="px-8 py-4 text-white rounded-2xl font-bold transition-all w-full sm:w-auto"
+                      style={{
+                        background: `linear-gradient(135deg, ${currentTheme.accent}, ${currentTheme.accent}cc)`,
+                        boxShadow: `0 12px 36px ${currentTheme.accent}45, 0 0 0 1px ${currentTheme.accent}30`,
+                      }}
                     >
                       Pick Up Where You Left
-                    </button>
+                    </motion.button>
                   )}
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
                     onClick={() => { setSidebarOpen(true); setActiveTab('library'); }}
-                    className="px-8 py-4 rounded-2xl font-bold transition-all w-full sm:w-auto border active:scale-95"
-                    style={{ background: currentTheme.secondary, borderColor: `${currentTheme.text}10`, color: currentTheme.text }}
+                    className="px-8 py-4 rounded-2xl font-bold transition-all w-full sm:w-auto glass"
+                    style={{
+                      background: `${currentTheme.secondary}cc`,
+                      border: `1px solid ${currentTheme.text}12`,
+                      color: currentTheme.text,
+                    }}
                   >
                     Explore Library
-                  </button>
+                  </motion.button>
                 </div>
 
                 <div className="text-xs opacity-40 space-y-1.5 max-w-md mx-auto">
@@ -566,13 +612,17 @@ export default function App() {
               <motion.aside
                 initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }}
                 transition={{ type: 'spring', damping: 28, stiffness: 260, mass: 0.8 }}
-                className="fixed top-0 left-0 bottom-0 w-full max-w-sm z-50 flex shadow-2xl"
-                style={{ backgroundColor: currentTheme.bg }}
+                className="fixed top-0 left-0 bottom-0 w-full max-w-sm z-50 flex glass"
+                style={{
+                  backgroundColor: `${currentTheme.bg}e8`,
+                  boxShadow: `4px 0 40px rgba(0,0,0,0.25), inset -1px 0 0 ${currentTheme.text}08`,
+                  borderRight: `1px solid ${currentTheme.text}10`,
+                }}
               >
                 {/* Nav rail */}
                 <div
                   className="w-[72px] flex flex-col items-center py-8 gap-6 border-r"
-                  style={{ backgroundColor: currentTheme.secondary, borderColor: `${currentTheme.text}08` }}
+                  style={{ background: `${currentTheme.secondary}cc`, borderColor: `${currentTheme.text}08` }}
                 >
                   {/* Streak mini badge at top of nav */}
                   {streak > 0 && (

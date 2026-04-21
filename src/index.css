@@ -46,7 +46,105 @@
   }
 }
 
-/* Paper Texture Overlay */
+/* ── Mesh Gradient Orbs ───────────────────────────────────────────── */
+
+@keyframes orb-float-1 {
+  0%,  100% { transform: translate(0px,   0px)   scale(1);    }
+  25%        { transform: translate(40px, -60px)  scale(1.08); }
+  50%        { transform: translate(-30px,-30px)  scale(0.95); }
+  75%        { transform: translate(20px,  45px)  scale(1.04); }
+}
+
+@keyframes orb-float-2 {
+  0%,  100% { transform: translate(0px,   0px)  scale(1);    }
+  25%        { transform: translate(-50px, 30px) scale(0.93); }
+  50%        { transform: translate(60px,  55px) scale(1.06); }
+  75%        { transform: translate(-20px,-40px) scale(0.97); }
+}
+
+@keyframes orb-float-3 {
+  0%,  100% { transform: translate(0px,   0px)  scale(1);    }
+  33%        { transform: translate(30px,  65px) scale(1.10); }
+  66%        { transform: translate(-60px, 10px) scale(0.92); }
+}
+
+.mesh-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.mesh-orb-1 { animation: orb-float-1 18s ease-in-out infinite; }
+.mesh-orb-2 { animation: orb-float-2 22s ease-in-out infinite; }
+.mesh-orb-3 { animation: orb-float-3 26s ease-in-out infinite; }
+
+/* ── Glass Utility ────────────────────────────────────────────────── */
+
+.glass {
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+}
+
+.glass-light {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+/* ── Alive Animations ─────────────────────────────────────────────── */
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.65; }
+  50%       { opacity: 1;    }
+}
+
+@keyframes shimmer-slide {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes breath-scale {
+  0%, 100% { transform: scale(1);    }
+  50%       { transform: scale(1.03); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg);   }
+  to   { transform: rotate(360deg); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.animate-breath {
+  animation: breath-scale 4s ease-in-out infinite;
+}
+
+.shimmer-text {
+  background-size: 200% auto;
+  animation: shimmer-slide 4s linear infinite;
+}
+
+/* ── Progress Bar Shimmer ─────────────────────────────────────────── */
+
+@keyframes progress-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%);  }
+}
+
+.progress-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 25%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: progress-shimmer 2.5s ease-in-out infinite;
+}
+
+/* ── Paper Texture Overlay ────────────────────────────────────────── */
+
 .paper-texture {
   position: relative;
 }
@@ -67,10 +165,8 @@
 .paper-texture::after {
   content: "";
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
   pointer-events: none;
   opacity: 0.03;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
@@ -87,7 +183,8 @@
   mix-blend-mode: screen;
 }
 
-/* Smooth range inputs */
+/* ── Smooth range inputs ──────────────────────────────────────────── */
+
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -96,8 +193,7 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 16px; height: 16px;
   border-radius: 50%;
   background: #3B82F6;
   cursor: pointer;
@@ -110,11 +206,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 16px; height: 16px;
   border-radius: 50%;
   background: #3B82F6;
   cursor: pointer;
   border: none;
   box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+}
+
+/* ── Glassmorphic card hover ──────────────────────────────────────── */
+
+.glass-card {
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.glass-card:hover {
+  transform: translateY(-1px);
 }

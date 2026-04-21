@@ -61,6 +61,12 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const isRenderingRef = useRef(false);
   const touchStartXRef = useRef(0);
   const touchStartYRef = useRef(0);
+  // Refs so callbacks don't need currentPage in their deps
+  const currentPageRef = useRef(currentPage);
+  const viewModeRef = useRef(viewMode);
+  // Track if an orientation change just happened (suppress page tracking)
+  const orientationChangingRef = useRef(false);
+  const isLandscapeRef = useRef(window.innerWidth > window.innerHeight);
 
   const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -68,7 +74,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scale, setScale] = useState(1.0);
   const [isAutoFit, setIsAutoFit] = useState(true);
-  const [isLandscape, setIsLandscape] = useState(window.innerWidth > window.innerHeight);
+  const [isLandscape, setIsLandscape] = useState(isLandscapeRef.current);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isUserInteracting, setIsUserInteracting] = useState(false);
   const [scrollPercentage, setScrollPercentage] = useState(0);
@@ -81,32 +87,56 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const quality = Math.max(1, Math.min(4, renderQuality ?? 2));
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
+  // Keep refs in sync
+  useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+
+  // ── Orientation / resize ─────────────────────────────────────────────────────
   useEffect(() => {
-    const onResize = () => setIsLandscape(window.innerWidth > window.innerHeight);
+    const onResize = () => {
+      const newLandscape = window.innerWidth > window.innerHeight;
+      if (newLandscape !== isLandscapeRef.current) {
+        isLandscapeRef.current = newLandscape;
+        setIsLandscape(newLandscape);
+
+        // Suppress scroll-based page detection during orientation reflow
+        orientationChangingRef.current = true;
+
+        // Re-anchor scroll position in continuous mode after reflow
+        setTimeout(() => {
+          if (viewModeRef.current === 'continuous') {
+            const el = document.getElementById(`pdf-page-${currentPageRef.current}`);
+            if (el && viewportRef.current) {
+              viewportRef.current.scrollTo({ top: el.offsetTop, behavior: 'instant' as ScrollBehavior });
+            }
+          }
+          orientationChangingRef.current = false;
+        }, 320);
+      }
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, []);
+  }, []); // stable — uses only refs
 
-  // ── Compute fit-to-width scale ──────────────────────────────────────────────
+  // ── Compute fit-to-width scale ────────────────────────────────────────────────
+  // Uses page 1 for size (most PDFs have uniform page sizes, avoids async cascade
+  // that previously caused "rumble" on orientation change when currentPage was a dep)
   const computeFitScale = useCallback(async (pdfDoc: pdfjsLib.PDFDocumentProxy): Promise<number> => {
     if (!viewportRef.current) return 1.0;
     try {
-      const page = await pdfDoc.getPage(currentPage || 1);
+      const page = await pdfDoc.getPage(1); // always page 1 — uniform across PDF
       const naturalVp = page.getViewport({ scale: 1.0 });
 
       const containerW = viewportRef.current.clientWidth || window.innerWidth;
       const containerH = viewportRef.current.clientHeight || window.innerHeight;
 
-      // In landscape, we want to fill the width (0 padding)
-      // In portrait, we want some breathing room (32px total horizontal padding)
       const horizontalPadding = isLandscape ? 0 : 32;
-      const verticalPadding = isLandscape ? 0 : 32;
+      const verticalPadding   = isLandscape ? 0 : 32;
 
       const scaleW = (containerW - horizontalPadding) / naturalVp.width;
 
       if (viewMode === 'page') {
         const scaleH = (containerH - verticalPadding) / naturalVp.height;
-        // Fit both width and height to ensure no cropping
         return Math.max(0.2, Math.min(scaleW, scaleH));
       }
 
@@ -114,9 +144,9 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     } catch {
       return 1.0;
     }
-  }, [isLandscape, viewMode, currentPage]);
+  }, [isLandscape, viewMode]); // ← currentPage intentionally removed
 
-  // ── Load PDF ────────────────────────────────────────────────────────────────
+  // ── Load PDF ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     let destroyed = false;
     let objectUrl: string | null = null;
@@ -132,7 +162,6 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
         renderTaskRef.current = null;
       }
 
-      // Destroy and clear cache for old PDF
       setPdf(prev => {
         if (prev) {
           const fp = (prev as any).fingerprints?.[0];
@@ -168,12 +197,11 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
         setPdf(pdfDoc);
         setNumPages(pdfDoc.numPages);
 
-        // Auto-fit scale to container width
         const fit = await computeFitScale(pdfDoc);
         setScale(fit);
         setIsAutoFit(true);
 
-        // Extract table of contents
+        // Extract TOC
         try {
           const outline = await pdfDoc.getOutline();
           if (outline && outline.length > 0) {
@@ -193,32 +221,29 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                   }
                   items.push({ title: String(node.title ?? ''), page, level });
                   if (node.items?.length) await processItems(node.items, level + 1);
-                } catch { /* skip malformed outline item */ }
+                } catch { /* skip malformed */ }
               }
             };
             await processItems(outline, 0);
             if (!destroyed) setToc(items);
           }
         } catch (e) {
-          console.warn('[PDFReader] Could not extract table of contents:', e);
+          console.warn('[PDFReader] Could not extract TOC:', e);
         }
       } catch (err: any) {
         if (destroyed) return;
         const name = err?.name ?? 'UnknownError';
-        const msg = err?.message ?? String(err);
-        console.error(`[PDFReader] Load failed | ${name}: ${msg}`, {
-          fileType: typeof file === 'string' ? 'url' : file?.constructor?.name,
-          ua: navigator.userAgent.slice(0, 80),
-        });
+        const msg  = err?.message ?? String(err);
+        console.error(`[PDFReader] Load failed | ${name}: ${msg}`);
 
         if (name === 'PasswordException' || err?.code === 1) {
           setLoadError('This PDF is password-protected. Password-protected PDFs are not supported yet.');
         } else if (name === 'InvalidPDFException' || msg.includes('Invalid PDF')) {
           setLoadError(`Corrupted or invalid PDF file. (${name})`);
         } else if (name === 'MissingPDFException' || msg.includes('Missing PDF')) {
-          setLoadError('PDF file not found or cannot be accessed. Try re-uploading.');
+          setLoadError('PDF file not found. Try re-uploading.');
         } else if (msg.includes('network') || msg.includes('fetch') || name === 'NetworkError') {
-          setLoadError(`Network error while loading PDF. Check your connection. (${name})`);
+          setLoadError(`Network error while loading PDF. (${name})`);
         } else {
           setLoadError(`Failed to load PDF. (${name}: ${msg.slice(0, 80)})`);
         }
@@ -237,21 +262,48 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
 
-  // ── ResizeObserver: re-compute fit scale on container resize ────────────────
+  // ── Restore page position when PDF loads (fixes "last page not restored" bug) ─
+  useEffect(() => {
+    if (!pdf) return;
+    if (viewMode === 'continuous') {
+      // In continuous mode, scroll to the saved page after pages render
+      const savedPage = currentPageRef.current;
+      setTimeout(() => {
+        const el = document.getElementById(`pdf-page-${savedPage}`);
+        if (el && viewportRef.current) {
+          viewportRef.current.scrollTo({ top: el.offsetTop, behavior: 'instant' as ScrollBehavior });
+        }
+      }, 150);
+    }
+    // In page mode, renderPage(currentPage) handles it via the [pdf, currentPage, renderPage, viewMode] effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdf]);
+
+  // ── ResizeObserver: re-compute fit scale on container resize (debounced) ──────
   useEffect(() => {
     if (!pdf || !isAutoFit) return;
     const el = viewportRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(async () => {
+
+    let debounceTimer: ReturnType<typeof setTimeout>;
+
+    const ro = new ResizeObserver(() => {
       if (!isAutoFit) return;
-      const fit = await computeFitScale(pdf);
-      setScale(fit);
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        const fit = await computeFitScale(pdf);
+        setScale(fit);
+      }, 120); // debounce prevents rapid scale flicker on orientation change
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [pdf, isAutoFit, isLandscape, computeFitScale]);
 
-  // ── Page-mode canvas render ─────────────────────────────────────────────────
+    return () => {
+      ro.disconnect();
+      clearTimeout(debounceTimer);
+    };
+  }, [pdf, isAutoFit, computeFitScale]);
+
+  // ── Page-mode canvas render ───────────────────────────────────────────────────
   const renderPage = useCallback(async (pageNum: number) => {
     const canvas = canvasRef.current;
     if (!pdf || !canvas || viewMode !== 'page') return;
@@ -278,7 +330,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      canvas.width = rv.width;
+      canvas.width  = rv.width;
       canvas.height = rv.height;
 
       const task = page.render({ canvasContext: ctx, viewport: rv } as any);
@@ -296,7 +348,6 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     }
   }, [pdf, scale, viewMode, dpr]);
 
-  // Re-render when page/scale/viewMode changes
   useEffect(() => {
     if (pdf && viewMode === 'page' && canvasRef.current) {
       renderPage(currentPage);
@@ -308,7 +359,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     if (node && pdf && viewMode === 'page') renderPage(currentPage);
   }, [pdf, currentPage, viewMode, renderPage]);
 
-  // ── Fullscreen ──────────────────────────────────────────────────────────────
+  // ── Fullscreen ────────────────────────────────────────────────────────────────
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
@@ -323,7 +374,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return () => document.removeEventListener('fullscreenchange', onFSChange);
   }, []);
 
-  // ── CSS-only sharpness filter (no render cost) ──────────────────────────────
+  // ── CSS-only sharpness filter ─────────────────────────────────────────────────
   const getPdfFilter = useCallback(() => {
     const sharpC = quality >= 4 ? 110 : quality >= 3 ? 107 : quality >= 2 ? 104 : 100;
     const sharpS = quality >= 4 ? 108 : quality >= 3 ? 105 : quality >= 2 ? 103 : 100;
@@ -333,7 +384,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return f;
   }, [brightness, theme, quality]);
 
-  // ── Scroll percentage ───────────────────────────────────────────────────────
+  // ── Scroll percentage ─────────────────────────────────────────────────────────
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
@@ -346,10 +397,11 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return () => vp.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ── Page tracking in continuous mode ───────────────────────────────────────
+  // ── Page tracking in continuous mode ─────────────────────────────────────────
   useEffect(() => {
     if (viewMode !== 'continuous' || !viewportRef.current || !pdf) return;
     const onScroll = () => {
+      if (orientationChangingRef.current) return; // skip during orientation reflow
       if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
       pageChangeDebounceRef.current = setTimeout(() => {
         const vp = viewportRef.current;
@@ -363,15 +415,18 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             if (dist < minDist) { minDist = dist; closest = i; }
           }
         }
-        if (closest !== currentPage) onPageChange(closest);
+        if (closest !== currentPageRef.current) onPageChange(closest);
       }, 150);
     };
     const vp = viewportRef.current;
     vp.addEventListener('scroll', onScroll, { passive: true });
-    return () => { vp.removeEventListener('scroll', onScroll); if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current); };
-  }, [viewMode, pdf, numPages, currentPage, onPageChange]);
+    return () => {
+      vp.removeEventListener('scroll', onScroll);
+      if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
+    };
+  }, [viewMode, pdf, numPages, onPageChange]); // currentPage removed — using ref
 
-  // ── User interaction / auto-scroll ─────────────────────────────────────────
+  // ── User interaction / auto-scroll ───────────────────────────────────────────
   const handleInteraction = useCallback(() => {
     if (!isAutoScrolling) return;
     setIsUserInteracting(true);
@@ -390,8 +445,9 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
         vp.scrollTop += autoScrollSpeed * 0.4;
         if (viewMode === 'page') {
           const { scrollTop, scrollHeight, clientHeight } = vp;
-          if (scrollTop + clientHeight >= scrollHeight - 2 && currentPage < numPages) {
-            onPageChange(currentPage + 1); vp.scrollTop = 0;
+          if (scrollTop + clientHeight >= scrollHeight - 2 && currentPageRef.current < numPages) {
+            onPageChange(currentPageRef.current + 1);
+            vp.scrollTop = 0;
           }
         }
       }
@@ -399,9 +455,9 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     };
     rafRef.current = requestAnimationFrame(scroll);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isAutoScrolling, autoScrollSpeed, currentPage, numPages, onPageChange, viewMode, isUserInteracting]);
+  }, [isAutoScrolling, autoScrollSpeed, numPages, onPageChange, viewMode, isUserInteracting]);
 
-  // ── Navigation ──────────────────────────────────────────────────────────────
+  // ── Navigation ────────────────────────────────────────────────────────────────
   const navigate = useCallback((page: number) => {
     const clamped = Math.max(1, Math.min(numPages, page));
     if (viewMode === 'continuous') {
@@ -413,7 +469,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     }
   }, [numPages, viewMode, onPageChange]);
 
-  // ── Keyboard navigation ─────────────────────────────────────────────────────
+  // ── Keyboard navigation ───────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -426,7 +482,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [currentPage, navigate, toggleFullscreen]);
 
-  // ── Swipe gestures (mobile page navigation) ─────────────────────────────────
+  // ── Swipe gestures ────────────────────────────────────────────────────────────
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartXRef.current = e.touches[0].clientX;
     touchStartYRef.current = e.touches[0].clientY;
@@ -437,15 +493,14 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     if (viewMode !== 'page') return;
     const dx = touchStartXRef.current - e.changedTouches[0].clientX;
     const dy = Math.abs(touchStartYRef.current - e.changedTouches[0].clientY);
-    // Only register horizontal swipe if it's clearly horizontal (not a scroll)
     if (Math.abs(dx) > 60 && Math.abs(dx) > dy * 1.5) {
       if (dx > 0) navigate(currentPage + 1);
       else navigate(currentPage - 1);
     }
   }, [viewMode, currentPage, navigate]);
 
-  // ── Zoom controls ───────────────────────────────────────────────────────────
-  const zoomIn = () => { setIsAutoFit(false); setScale(s => Math.min(5, parseFloat((s + 0.25).toFixed(2)))); };
+  // ── Zoom ─────────────────────────────────────────────────────────────────────
+  const zoomIn  = () => { setIsAutoFit(false); setScale(s => Math.min(5, parseFloat((s + 0.25).toFixed(2)))); };
   const zoomOut = () => { setIsAutoFit(false); setScale(s => Math.max(0.3, parseFloat((s - 0.25).toFixed(2)))); };
   const resetFit = async () => {
     if (!pdf) return;
@@ -455,7 +510,12 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   };
 
   const isBookmarked = bookmarks.some(b => b.pageNumber === currentPage);
-  const progress = numPages > 0 ? Math.round((currentPage / numPages) * 100) : 0;
+
+  // ── Fixed progress calculation ────────────────────────────────────────────────
+  // Page 1 = 0%, last page = 100% (was previously 1%–100%, now 0%–100%)
+  const progress  = numPages > 1
+    ? Math.round(((currentPage - 1) / (numPages - 1)) * 100)
+    : numPages === 1 ? 100 : 0;
   const pagesLeft = numPages - currentPage;
 
   return (
@@ -463,7 +523,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       ref={containerRef}
       className={cn(
         'relative flex flex-col w-full h-full overflow-hidden transition-colors duration-500',
-        theme === 'sepia' && 'sepia-texture',
+        theme === 'sepia'    && 'sepia-texture',
         (theme === 'dark' || theme === 'nord') && 'dark-texture',
         theme === 'midnight' && 'midnight-texture',
         'paper-texture'
@@ -472,13 +532,16 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     >
       {/* ── Loading ── */}
       {loading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 gap-4" style={{ background: currentTheme.bg }}>
-          <div className="rounded-full animate-spin" style={{
-            width: 44, height: 44,
-            border: `3px solid ${currentTheme.accent}30`,
-            borderTopColor: currentTheme.accent,
-          }} />
-          <p className="text-sm opacity-40" style={{ color: currentTheme.text }}>Loading PDF…</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 gap-5" style={{ background: currentTheme.bg }}>
+          <div
+            className="w-12 h-12 rounded-full"
+            style={{
+              border: `2px solid ${currentTheme.accent}20`,
+              borderTopColor: currentTheme.accent,
+              animation: 'spin 0.8s linear infinite',
+            }}
+          />
+          <p className="text-sm" style={{ color: currentTheme.text, opacity: 0.4 }}>Loading PDF…</p>
         </div>
       )}
 
@@ -497,17 +560,20 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
       {!loading && !loadError && pdf && (
         <>
-          {/* Progress bar */}
-          <div className="absolute top-0 left-0 right-0 h-0.5 z-30" style={{ background: 'rgba(255,255,255,0.05)' }}>
-            <div className="h-full transition-all duration-300" style={{ width: `${progress}%`, background: currentTheme.accent }} />
+          {/* Thin progress bar */}
+          <div className="absolute top-0 left-0 right-0 h-0.5 z-30 overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+            <div
+              className="h-full transition-all duration-500 relative progress-shimmer"
+              style={{ width: `${progress}%`, background: currentTheme.accent }}
+            />
           </div>
 
-          {/* Top HUD (tap/hover to reveal) */}
+          {/* ── Top HUD ── */}
           <motion.div
             initial={{ opacity: 0 }}
             whileHover={{ opacity: 1 }}
             className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-3 pointer-events-none"
-            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, transparent 100%)' }}
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.40) 0%, transparent 100%)' }}
           >
             {/* Page input */}
             <div className="pointer-events-auto">
@@ -520,8 +586,10 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                   onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setPageInput(null); }}
                 />
               ) : (
-                <button onClick={() => setPageInput(String(currentPage))}
-                  className="text-sm font-medium text-white/80 hover:text-white transition-colors font-mono leading-none">
+                <button
+                  onClick={() => setPageInput(String(currentPage))}
+                  className="text-sm font-medium text-white/80 hover:text-white transition-colors font-mono leading-none"
+                >
                   <span>{currentPage}</span>
                   <span className="opacity-40"> / {numPages}</span>
                 </button>
@@ -531,7 +599,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             {/* Controls */}
             <div className="flex items-center gap-1.5 pointer-events-auto">
               {/* Zoom */}
-              <div className="flex items-center bg-black/25 backdrop-blur-md rounded-full px-2 border border-white/10">
+              <div className="flex items-center glass rounded-full px-2 border border-white/10" style={{ background: 'rgba(0,0,0,0.28)' }}>
                 <button onClick={zoomOut} className="p-2 text-white/80 hover:text-white transition-colors"><ZoomOut size={15} /></button>
                 <button
                   onClick={resetFit}
@@ -543,24 +611,33 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                 <button onClick={zoomIn} className="p-2 text-white/80 hover:text-white transition-colors"><ZoomIn size={15} /></button>
               </div>
 
-              {/* TOC button (only if outline exists) */}
               {toc.length > 0 && (
-                <button onClick={() => setShowToc(t => !t)}
-                  className={cn('p-2 rounded-full transition-all', showToc ? 'bg-white/20 text-white' : 'bg-black/20 text-white/70 hover:text-white')}>
+                <button
+                  onClick={() => setShowToc(t => !t)}
+                  className={cn('p-2 rounded-full transition-all glass', showToc ? 'text-white' : 'text-white/70 hover:text-white')}
+                  style={{ background: showToc ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)' }}
+                >
                   <List size={17} />
                 </button>
               )}
 
-              {/* Bookmark */}
-              <button onClick={() => onToggleBookmark(currentPage)}
-                className="p-2 rounded-full transition-all"
-                style={{ color: isBookmarked ? '#F59E0B' : 'rgba(255,255,255,0.7)', background: isBookmarked ? 'rgba(245,158,11,0.15)' : 'rgba(0,0,0,0.2)' }}>
+              <button
+                onClick={() => onToggleBookmark(currentPage)}
+                className="p-2 rounded-full transition-all glass"
+                style={{
+                  color: isBookmarked ? '#F59E0B' : 'rgba(255,255,255,0.7)',
+                  background: isBookmarked ? 'rgba(245,158,11,0.18)' : 'rgba(0,0,0,0.25)',
+                  border: `1px solid ${isBookmarked ? 'rgba(245,158,11,0.35)' : 'rgba(255,255,255,0.12)'}`,
+                }}
+              >
                 {isBookmarked ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}
               </button>
 
-              {/* Fullscreen */}
-              <button onClick={toggleFullscreen}
-                className="p-2 rounded-full bg-black/20 text-white/70 hover:text-white transition-all">
+              <button
+                onClick={toggleFullscreen}
+                className="p-2 rounded-full glass text-white/70 hover:text-white transition-all"
+                style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)' }}
+              >
                 {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
               </button>
             </div>
@@ -596,7 +673,6 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                 ))}
               </div>
             ) : (
-              // ── Single page mode — persistent canvas, no key remounting ──
               <div className={cn(
                 'flex justify-center items-center min-h-full w-full',
                 isLandscape ? 'p-0' : 'p-4'
@@ -619,38 +695,67 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
             )}
           </div>
 
-          {/* ── Bottom navigation ── */}
-          <div className="absolute bottom-5 left-0 right-0 flex justify-center items-center gap-4 z-10 pointer-events-none">
-            <button
+          {/* ── Bottom navigation — glassmorphic pill ── */}
+          <div className="absolute bottom-5 left-0 right-0 flex justify-center items-center gap-3 z-10 pointer-events-none">
+            <motion.button
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.9 }}
               disabled={currentPage <= 1}
               onClick={() => navigate(currentPage - 1)}
-              className="p-3.5 rounded-full backdrop-blur-md text-white transition-all pointer-events-auto disabled:opacity-25 active:scale-90"
-              style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)' }}
+              className="p-3.5 rounded-full glass text-white transition-all pointer-events-auto disabled:opacity-20 active:scale-90"
+              style={{
+                background: 'rgba(0,0,0,0.38)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+              }}
             >
               <ChevronLeft size={22} />
-            </button>
+            </motion.button>
 
-            <div
-              className="flex flex-col items-center px-4 py-2 rounded-2xl backdrop-blur-md text-white pointer-events-auto cursor-pointer"
-              style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)' }}
+            {/* Center info pill */}
+            <motion.div
+              whileTap={{ scale: 0.97 }}
+              className="flex items-center gap-3 px-5 py-2.5 rounded-2xl glass text-white pointer-events-auto cursor-pointer"
+              style={{
+                background: 'rgba(0,0,0,0.42)',
+                border: '1px solid rgba(255,255,255,0.13)',
+                boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px ${currentTheme.accent}18`,
+              }}
               onClick={() => setPageInput(String(currentPage))}
             >
-              <span className="font-mono text-xs font-medium">
-                {viewMode === 'continuous' ? `${scrollPercentage}%` : `${progress}%`}
-              </span>
-              {pagesLeft > 2 && (
-                <span className="text-[9px] opacity-40 leading-none mt-0.5">{formatReadingTime(pagesLeft)} left</span>
-              )}
-            </div>
+              {/* Page dots — visual progress */}
+              <div className="flex items-center gap-1">
+                <div className="w-1.5 h-1.5 rounded-full" style={{ background: currentTheme.accent, boxShadow: `0 0 6px ${currentTheme.accent}` }} />
+                <span className="text-[10px] font-mono text-white/50">{currentPage}/{numPages}</span>
+              </div>
 
-            <button
+              <div className="w-px h-4 bg-white/10" />
+
+              {/* Progress & time */}
+              <div className="flex flex-col items-center">
+                <span className="font-mono text-xs font-semibold leading-none" style={{ color: currentTheme.accent }}>
+                  {viewMode === 'continuous' ? `${scrollPercentage}%` : `${progress}%`}
+                </span>
+                {pagesLeft > 2 && (
+                  <span className="text-[9px] text-white/35 leading-none mt-0.5">{formatReadingTime(pagesLeft)} left</span>
+                )}
+              </div>
+            </motion.div>
+
+            <motion.button
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.9 }}
               disabled={currentPage >= numPages}
               onClick={() => navigate(currentPage + 1)}
-              className="p-3.5 rounded-full backdrop-blur-md text-white transition-all pointer-events-auto disabled:opacity-25 active:scale-90"
-              style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)' }}
+              className="p-3.5 rounded-full glass text-white transition-all pointer-events-auto disabled:opacity-20 active:scale-90"
+              style={{
+                background: 'rgba(0,0,0,0.38)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+              }}
             >
               <ChevronRight size={22} />
-            </button>
+            </motion.button>
           </div>
 
           {/* ── Table of Contents drawer ── */}
@@ -667,14 +772,17 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                 <motion.div
                   initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                   transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
-                  className="absolute bottom-0 left-0 right-0 z-40 rounded-t-3xl overflow-hidden"
-                  style={{ backgroundColor: currentTheme.bg, maxHeight: '72vh' }}
+                  className="absolute bottom-0 left-0 right-0 z-40 rounded-t-3xl overflow-hidden glass"
+                  style={{
+                    backgroundColor: currentTheme.bg,
+                    maxHeight: '72vh',
+                    borderTop: `1px solid ${currentTheme.text}12`,
+                    boxShadow: '0 -8px 40px rgba(0,0,0,0.3)',
+                  }}
                 >
-                  {/* Handle */}
                   <div className="flex justify-center pt-3 pb-1">
                     <div className="w-10 h-1 rounded-full opacity-20" style={{ background: currentTheme.text }} />
                   </div>
-                  {/* Header */}
                   <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: `${currentTheme.text}10` }}>
                     <div>
                       <h3 className="font-bold text-base" style={{ color: currentTheme.text }}>Table of Contents</h3>
@@ -684,7 +792,6 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                       <X size={18} />
                     </button>
                   </div>
-                  {/* Items */}
                   <div className="overflow-y-auto custom-scrollbar" style={{ maxHeight: 'calc(72vh - 88px)' }}>
                     {toc.map((item, i) => (
                       <button
@@ -697,7 +804,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                         style={{
                           paddingLeft: `${20 + item.level * 16}px`,
                           color: item.page === currentPage ? currentTheme.accent : currentTheme.text,
-                          background: item.page === currentPage ? `${currentTheme.accent}10` : 'transparent',
+                          background: item.page === currentPage ? `${currentTheme.accent}12` : 'transparent',
                           opacity: 0.9 - item.level * 0.15,
                         }}
                       >
