@@ -71,15 +71,6 @@ android/app/src/main/java/com/veuros/ribi/
 4. Set `default_web_client_id` in `strings.xml`
 5. See `android/SETUP.md` for full instructions
 
-### Version 1.1 Changes
-- Real `google-services.json` configured (Firebase project: ai-studio-applet-webapp-e4b87)
-- Auth screen: comprehensive error handling (network, credentials, no-account, rate-limit), bypass button (Continue without account / Guest Mode)
-- PDF themes now apply color filters to pages: Dark/Midnight inverts colors, Sepia applies warm tint, Nord applies cool tint, Light is natural
-- TTS (Text-to-Speech): extracts PDF text via PDFBox, reads pages aloud in Male or Female voice at adjustable speed
-- Logos: VEUROS company logo on splash + auth footer, Ribi logo on auth and splash screens
-- Smooth page transitions with AnimatedContent crossfade
-- Performance: LRU cache enlarged (10 pages), faster preloading (3 ahead), smarter state updates
-
 ### Features (Android)
 - Animated VEUROS splash screen
 - Google Sign-In authentication

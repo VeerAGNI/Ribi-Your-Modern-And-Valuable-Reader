@@ -1,44 +1,42 @@
 {
+  "_INSTRUCTIONS": "Replace this entire file with your actual google-services.json from the Firebase Console.",
+  "_STEPS": [
+    "1. Go to https://console.firebase.google.com",
+    "2. Select your project (or create one)",
+    "3. Add an Android app with package name: com.veuros.ribi",
+    "4. Download google-services.json",
+    "5. Replace this file with the downloaded file",
+    "6. Enable Authentication -> Google Sign-In in Firebase Console",
+    "7. Enable Firestore Database in Firebase Console",
+    "8. In strings.xml, set default_web_client_id to your OAuth 2.0 Web Client ID"
+  ],
   "project_info": {
-    "project_number": "1027839418693",
-    "project_id": "ai-studio-applet-webapp-e4b87",
-    "storage_bucket": "ai-studio-applet-webapp-e4b87.firebasestorage.app"
+    "project_number": "YOUR_PROJECT_NUMBER",
+    "project_id": "YOUR_PROJECT_ID",
+    "storage_bucket": "YOUR_PROJECT_ID.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1027839418693:android:fbe341a4eb94acf87b1e2c",
+        "mobilesdk_app_id": "1:YOUR_PROJECT_NUMBER:android:YOUR_APP_HASH",
         "android_client_info": {
           "package_name": "com.veuros.ribi"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1027839418693-1h8bs9olbgt8eotounfognpig1s9qfd3.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.veuros.ribi",
-            "certificate_hash": "f66c5fb63b56d0a28bd0517ad3c00e8fb67c1e5f"
-          }
-        },
-        {
-          "client_id": "1027839418693-bfojn16hqjv2do9ob29jf6oifmja3sju.apps.googleusercontent.com",
+          "client_id": "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDH5OK6UJskJ7aM5JVUi716f_yJXjlH7mw"
+          "current_key": "YOUR_API_KEY"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "1027839418693-bfojn16hqjv2do9ob29jf6oifmja3sju.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }
