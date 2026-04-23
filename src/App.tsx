@@ -71,6 +71,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [books, setBooks] = useState<BookMetadata[]>([]);
+  const booksRef = useRef<BookMetadata[]>([]);
+  booksRef.current = books;
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [activeFile, setActiveFile] = useState<File | Blob | null>(null);
   const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_SETTINGS);
@@ -296,8 +298,10 @@ export default function App() {
   };
 
   const handlePageChange = useCallback(async (page: number) => {
-    if (!activeBookId) return;
-    const book = books.find(b => b.id === activeBookId);
+    const id = activeBookId; // capture stable ID
+    if (!id) return;
+    const currentBooks = booksRef.current;
+    const book = currentBooks.find(b => b.id === id);
     if (!book) return;
 
     const prevMax = book.maxPageReached || 0;
@@ -306,14 +310,14 @@ export default function App() {
 
     // Always update local state immediately (fixes last-page-not-restored bug)
     setBooks(prev => prev.map(b =>
-      b.id === activeBookId ? { ...b, currentPage: page, maxPageReached, lastRead: Date.now() } : b
+      b.id === id ? { ...b, currentPage: page, maxPageReached, lastRead: Date.now() } : b
     ));
 
     // Guest users: local only, no Firestore
     if (!user || user.isAnonymous) return;
 
-    setDoc(doc(db, 'users', user.uid, 'books', activeBookId), { ...book, currentPage: page, maxPageReached, uid: user.uid }, { merge: true })
-      .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
+    setDoc(doc(db, 'users', user.uid, 'books', id), { ...book, currentPage: page, maxPageReached, uid: user.uid }, { merge: true })
+      .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${id}`));
 
     if (pagesReadDiff > 0) {
       const stats: ReadingStats = {
@@ -387,7 +391,7 @@ export default function App() {
         });
       }
     }
-  }, [activeBookId, user, books, updateSettings]);
+  }, [activeBookId, user, updateSettings]);
 
   const toggleBookmark = async (page: number) => {
     if (!activeBookId) return;
