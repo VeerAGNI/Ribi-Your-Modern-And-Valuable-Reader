@@ -58,12 +58,14 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const pageChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number>(0);
+  const scrollAccumulatorRef = useRef<number>(0);
   const isRenderingRef = useRef(false);
   const touchStartXRef = useRef(0);
   const touchStartYRef = useRef(0);
   // Refs so callbacks don't need currentPage in their deps
   const currentPageRef = useRef(currentPage);
   const viewModeRef = useRef(viewMode);
+  const onPageChangeRef = useRef(onPageChange);
   // Track if an orientation change just happened (suppress page tracking)
   const orientationChangingRef = useRef(false);
   const isLandscapeRef = useRef(window.innerWidth > window.innerHeight);
@@ -90,6 +92,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   // Keep refs in sync
   useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  useEffect(() => { onPageChangeRef.current = onPageChange; }, [onPageChange]);
 
   // ── Orientation / resize ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -103,15 +106,21 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
         orientationChangingRef.current = true;
 
         // Re-anchor scroll position in continuous mode after reflow
+        // Using a longer delay and requestAnimationFrame to ensure layout has settled
         setTimeout(() => {
-          if (viewModeRef.current === 'continuous') {
-            const el = document.getElementById(`pdf-page-${currentPageRef.current}`);
-            if (el && viewportRef.current) {
-              viewportRef.current.scrollTo({ top: el.offsetTop, behavior: 'instant' as ScrollBehavior });
+          requestAnimationFrame(() => {
+            if (viewModeRef.current === 'continuous') {
+              const el = document.getElementById(`pdf-page-${currentPageRef.current}`);
+              if (el && viewportRef.current) {
+                viewportRef.current.scrollTop = el.offsetTop;
+              }
             }
-          }
-          orientationChangingRef.current = false;
-        }, 320);
+            // Add another small delay before re-enabling page tracking
+            setTimeout(() => {
+              orientationChangingRef.current = false;
+            }, 200);
+          });
+        }, 400);
       }
     };
     window.addEventListener('resize', onResize);
@@ -301,7 +310,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       ro.disconnect();
       clearTimeout(debounceTimer);
     };
-  }, [pdf, isAutoFit, computeFitScale]);
+  }, [pdf, isAutoFit, computeFitScale, loading]);
 
   // ── Page-mode canvas render ───────────────────────────────────────────────────
   const renderPage = useCallback(async (pageNum: number) => {
@@ -384,47 +393,55 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return f;
   }, [brightness, theme, quality]);
 
-  // ── Scroll percentage ─────────────────────────────────────────────────────────
+  // ── Combined scroll listener (Progress & Page tracking) ──────────────────────
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
+
     const onScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = vp;
+
+      // 1. Update scroll percentage
       const total = scrollHeight - clientHeight;
       setScrollPercentage(total > 0 ? Math.round((scrollTop / total) * 100) : 0);
-    };
-    vp.addEventListener('scroll', onScroll, { passive: true });
-    return () => vp.removeEventListener('scroll', onScroll);
-  }, []);
 
-  // ── Page tracking in continuous mode ─────────────────────────────────────────
-  useEffect(() => {
-    if (viewMode !== 'continuous' || !viewportRef.current || !pdf) return;
-    const onScroll = () => {
-      if (orientationChangingRef.current) return; // skip during orientation reflow
-      if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
-      pageChangeDebounceRef.current = setTimeout(() => {
-        const vp = viewportRef.current;
-        if (!vp) return;
-        const center = vp.scrollTop + vp.clientHeight / 2;
-        let closest = 1, minDist = Infinity;
-        for (let i = 1; i <= numPages; i++) {
-          const el = document.getElementById(`pdf-page-${i}`);
-          if (el) {
-            const dist = Math.abs(el.offsetTop + el.offsetHeight / 2 - center);
-            if (dist < minDist) { minDist = dist; closest = i; }
+      // 2. Continuous mode page tracking
+      if (viewModeRef.current === 'continuous' && !orientationChangingRef.current) {
+        if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
+        pageChangeDebounceRef.current = setTimeout(() => {
+          const innerVp = viewportRef.current;
+          if (!innerVp) return;
+          const center = innerVp.scrollTop + innerVp.clientHeight / 2;
+
+          let closest = currentPageRef.current;
+          let minDist = Infinity;
+          for (let i = 1; i <= numPages; i++) {
+            const el = document.getElementById(`pdf-page-${i}`);
+            if (el) {
+              const pageTop = el.offsetTop;
+              const pageBottom = pageTop + el.offsetHeight;
+              if (center >= pageTop && center <= pageBottom) {
+                closest = i;
+                break;
+              }
+              const dist = Math.abs(pageTop + el.offsetHeight / 2 - center);
+              if (dist < minDist) { minDist = dist; closest = i; }
+            }
           }
-        }
-        if (closest !== currentPageRef.current) onPageChange(closest);
-      }, 150);
+
+          if (closest !== currentPageRef.current) {
+            onPageChangeRef.current(closest);
+          }
+        }, 150);
+      }
     };
-    const vp = viewportRef.current;
+
     vp.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       vp.removeEventListener('scroll', onScroll);
       if (pageChangeDebounceRef.current) clearTimeout(pageChangeDebounceRef.current);
     };
-  }, [viewMode, pdf, numPages, onPageChange]); // currentPage removed — using ref
+  }, [numPages, loading]); // include loading to re-attach when viewport appears
 
   // ── User interaction / auto-scroll ───────────────────────────────────────────
   const handleInteraction = useCallback(() => {
@@ -442,14 +459,26 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     const scroll = () => {
       const vp = viewportRef.current;
       if (vp && !isUserInteracting) {
-        vp.scrollTop += autoScrollSpeed * 0.4;
+        // Accumulate fractional scroll
+        scrollAccumulatorRef.current += autoScrollSpeed * 0.4;
+
+        if (Math.abs(scrollAccumulatorRef.current) >= 1) {
+          const toScroll = Math.floor(scrollAccumulatorRef.current);
+          vp.scrollTop += toScroll;
+          scrollAccumulatorRef.current -= toScroll;
+        }
+
         if (viewMode === 'page') {
           const { scrollTop, scrollHeight, clientHeight } = vp;
           if (scrollTop + clientHeight >= scrollHeight - 2 && currentPageRef.current < numPages) {
             onPageChange(currentPageRef.current + 1);
             vp.scrollTop = 0;
+            scrollAccumulatorRef.current = 0;
           }
         }
+      } else {
+        // Reset accumulator when interacting or stopped
+        scrollAccumulatorRef.current = 0;
       }
       rafRef.current = requestAnimationFrame(scroll);
     };
@@ -646,7 +675,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
           {/* ── Reader viewport ── */}
           <div
             ref={viewportRef}
-            className="flex-1 w-full overflow-y-auto custom-scrollbar"
+            className="flex-1 w-full overflow-y-auto custom-scrollbar relative"
             style={{ scrollBehavior: isAutoScrolling ? 'auto' : 'smooth', overscrollBehavior: 'contain' }}
             onMouseDown={handleInteraction}
             onTouchStart={handleTouchStart}

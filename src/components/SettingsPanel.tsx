@@ -142,9 +142,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
         <div className="flex items-center gap-3">
           <span className="text-[10px] opacity-40" style={{ color: currentTheme.text }}>Slow</span>
           <input
-            type="range" min="0.1" max="10" step="0.1"
-            value={settings.autoScrollSpeed}
-            onChange={e => onUpdate({ autoScrollSpeed: parseFloat(e.target.value) })}
+            type="range" min="0.1" max="10" step="0.01"
+            value={Math.sqrt(settings.autoScrollSpeed * 5)}
+            onChange={e => {
+              const val = parseFloat(e.target.value);
+              // x = val^2 / 5 -> when val=0.1, x=0.002; when val=10, x=20
+              onUpdate({ autoScrollSpeed: (val * val) / 5 });
+            }}
             className="flex-1 h-1.5 rounded-lg appearance-none cursor-pointer accent-blue-500"
             style={{ background: 'rgba(0,0,0,0.15)' }}
           />
