@@ -58,6 +58,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const pageChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number>(0);
+  const scrollAccumulatorRef = useRef<number>(0);
   const isRenderingRef = useRef(false);
   const touchStartXRef = useRef(0);
   const touchStartYRef = useRef(0);
@@ -458,14 +459,26 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     const scroll = () => {
       const vp = viewportRef.current;
       if (vp && !isUserInteracting) {
-        vp.scrollTop += autoScrollSpeed * 0.4;
+        // Accumulate fractional scroll
+        scrollAccumulatorRef.current += autoScrollSpeed * 0.4;
+
+        if (Math.abs(scrollAccumulatorRef.current) >= 1) {
+          const toScroll = Math.floor(scrollAccumulatorRef.current);
+          vp.scrollTop += toScroll;
+          scrollAccumulatorRef.current -= toScroll;
+        }
+
         if (viewMode === 'page') {
           const { scrollTop, scrollHeight, clientHeight } = vp;
           if (scrollTop + clientHeight >= scrollHeight - 2 && currentPageRef.current < numPages) {
             onPageChange(currentPageRef.current + 1);
             vp.scrollTop = 0;
+            scrollAccumulatorRef.current = 0;
           }
         }
+      } else {
+        // Reset accumulator when interacting or stopped
+        scrollAccumulatorRef.current = 0;
       }
       rafRef.current = requestAnimationFrame(scroll);
     };
