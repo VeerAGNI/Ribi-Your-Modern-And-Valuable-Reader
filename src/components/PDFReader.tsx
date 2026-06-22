@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronLeft, ChevronRight, Maximize2, Minimize2,
-  Bookmark, BookmarkCheck, ZoomIn, ZoomOut, AlertCircle, List, X,
+  Bookmark, BookmarkCheck, ZoomIn, ZoomOut, AlertCircle, List, X, Volume2, VolumeX,
 } from 'lucide-react';
 import { Theme, Bookmark as BookmarkType, ViewMode, ReaderSettings, TocItem } from '../types';
 import { THEMES, AVG_PAGES_PER_MIN } from '../constants';
@@ -82,6 +82,8 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   const [toc, setToc] = useState<TocItem[]>([]);
   const [showToc, setShowToc] = useState(false);
   const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isReadingAloud, setIsReadingAloud] = useState(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const currentTheme = THEMES[theme];
   const quality = Math.max(1, Math.min(4, renderQuality ?? 2));
@@ -322,7 +324,8 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
 
       const scaledViewport = page.getViewport({ scale });
       const maxDim = 10000;
-      const multiplier = Math.min(dpr, maxDim / Math.max(scaledViewport.width, scaledViewport.height));
+      const qualityMult = quality >= 4 ? 2.0 : quality >= 3 ? 1.5 : quality >= 2 ? 1.0 : 0.75;
+      const multiplier = Math.min(dpr * qualityMult, maxDim / Math.max(scaledViewport.width, scaledViewport.height));
       const rv = page.getViewport({ scale: scale * multiplier });
 
       const ctx = canvas.getContext('2d', { alpha: false });
@@ -374,15 +377,65 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
     return () => document.removeEventListener('fullscreenchange', onFSChange);
   }, []);
 
-  // ── CSS-only sharpness filter ─────────────────────────────────────────────────
+  // ── Read Aloud ────────────────────────────────────────────────────────────────
+  const stopReadAloud = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    utteranceRef.current = null;
+    setIsReadingAloud(false);
+  }, []);
+
+  const startReadAloud = useCallback(async (pageNum: number) => {
+    if (!pdf) return;
+    window.speechSynthesis?.cancel();
+    setIsReadingAloud(true);
+    try {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const text = textContent.items
+        .map((item: any) => item.str ?? '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!text) { setIsReadingAloud(false); return; }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+      utterance.lang = 'en-US';
+      utterance.onend = () => { utteranceRef.current = null; setIsReadingAloud(false); };
+      utterance.onerror = () => { utteranceRef.current = null; setIsReadingAloud(false); };
+      utteranceRef.current = utterance;
+      window.speechSynthesis?.speak(utterance);
+    } catch {
+      setIsReadingAloud(false);
+    }
+  }, [pdf]);
+
+  const toggleReadAloud = useCallback(() => {
+    if (isReadingAloud) {
+      stopReadAloud();
+    } else {
+      startReadAloud(currentPage);
+    }
+  }, [isReadingAloud, stopReadAloud, startReadAloud, currentPage]);
+
+  // Stop read aloud when page changes
+  useEffect(() => {
+    if (isReadingAloud) stopReadAloud();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
+
+  // Cleanup on unmount
+  useEffect(() => () => { window.speechSynthesis?.cancel(); }, []);
+
+  // ── PDF colour / invert filter (page mode canvas) ────────────────────────────
   const getPdfFilter = useCallback(() => {
-    const sharpC = quality >= 4 ? 110 : quality >= 3 ? 107 : quality >= 2 ? 104 : 100;
-    const sharpS = quality >= 4 ? 108 : quality >= 3 ? 105 : quality >= 2 ? 103 : 100;
-    let f = `brightness(${brightness}%) contrast(${sharpC}%) saturate(${sharpS}%)`;
-    if (theme === 'dark' || theme === 'midnight' || theme === 'nord') f += ' invert(90%) hue-rotate(180deg)';
-    else if (theme === 'sepia') f += ' sepia(40%)';
-    return f;
-  }, [brightness, theme, quality]);
+    if (theme === 'dark' || theme === 'midnight') return 'invert(1)';
+    if (theme === 'nord') return 'invert(1) sepia(20%) hue-rotate(185deg)';
+    if (theme === 'sepia') return 'sepia(40%)';
+    return 'none';
+  }, [theme]);
 
   // ── Scroll percentage ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -634,6 +687,19 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
               </button>
 
               <button
+                onClick={toggleReadAloud}
+                className={cn('p-2 rounded-full glass transition-all', isReadingAloud ? 'text-white' : 'text-white/70 hover:text-white')}
+                style={{
+                  background: isReadingAloud ? 'rgba(139,92,246,0.35)' : 'rgba(0,0,0,0.25)',
+                  border: `1px solid ${isReadingAloud ? 'rgba(139,92,246,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                  boxShadow: isReadingAloud ? '0 0 12px rgba(139,92,246,0.4)' : undefined,
+                }}
+                title={isReadingAloud ? 'Stop reading' : 'Read aloud'}
+              >
+                {isReadingAloud ? <VolumeX size={17} /> : <Volume2 size={17} />}
+              </button>
+
+              <button
                 onClick={toggleFullscreen}
                 className="p-2 rounded-full glass text-white/70 hover:text-white transition-all"
                 style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)' }}
@@ -656,21 +722,42 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
           >
             {viewMode === 'continuous' ? (
               <div className="flex flex-col items-center py-4">
-                {Array.from({ length: numPages }, (_, i) => (
-                  <div key={i + 1} id={`pdf-page-${i + 1}`} className="w-full">
-                    <PDFPage
-                      pdf={pdf}
-                      pageNumber={i + 1}
-                      scale={scale}
-                      brightness={brightness}
-                      contrast={100}
-                      theme={theme}
-                      isLandscape={isLandscape}
-                      renderQuality={quality}
-                      onVisible={() => {}}
-                    />
-                  </div>
-                ))}
+                {Array.from({ length: numPages }, (_, i) => {
+                  const pageNum = i + 1;
+                  const inWindow = Math.abs(pageNum - currentPage) <= 6;
+                  return (
+                    <div key={pageNum} id={`pdf-page-${pageNum}`} className="w-full">
+                      {inWindow ? (
+                        <PDFPage
+                          pdf={pdf}
+                          pageNumber={pageNum}
+                          scale={scale}
+                          brightness={brightness}
+                          contrast={100}
+                          theme={theme}
+                          isLandscape={isLandscape}
+                          renderQuality={quality}
+                          onVisible={() => {}}
+                        />
+                      ) : (
+                        <div className={isLandscape ? 'py-1 px-0' : 'py-3 px-3'}>
+                          <div style={{
+                            width: '100%',
+                            aspectRatio: pageDimensions
+                              ? `${pageDimensions.width} / ${pageDimensions.height}`
+                              : '3 / 4',
+                            borderRadius: 2,
+                            background: (theme === 'dark' || theme === 'midnight')
+                              ? '#0a0a0a'
+                              : theme === 'nord'
+                              ? '#282C36'
+                              : '#f0f0f0',
+                          }} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className={cn(
@@ -678,7 +765,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                 isLandscape ? 'p-0' : 'p-4'
               )}>
                 <div
-                  className="rounded-sm overflow-hidden bg-white relative transition-all duration-300"
+                  className="rounded-sm overflow-hidden relative transition-all duration-300"
                   style={{
                     filter: getPdfFilter(),
                     boxShadow: theme === 'sepia'
@@ -687,9 +774,16 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
                     width: '100%',
                     maxWidth: pageDimensions ? `${pageDimensions.width * scale}px` : 'none',
                     aspectRatio: pageDimensions ? `${pageDimensions.width} / ${pageDimensions.height}` : 'auto',
+                    backgroundColor: (theme === 'dark' || theme === 'midnight' || theme === 'nord') ? '#000' : '#fff',
                   }}
                 >
                   <canvas ref={setCanvasRef} className="block w-full h-full" />
+                  {brightness < 100 && (
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{ background: `rgba(0,0,0,${((100 - brightness) / 100 * 0.88).toFixed(3)})`, zIndex: 2 }}
+                    />
+                  )}
                 </div>
               </div>
             )}

@@ -304,89 +304,76 @@ export default function App() {
     const maxPageReached = Math.max(prevMax, page);
     const pagesReadDiff = maxPageReached - prevMax;
 
-    // Always update local state immediately (fixes last-page-not-restored bug)
+    // Always update local state immediately
     setBooks(prev => prev.map(b =>
       b.id === activeBookId ? { ...b, currentPage: page, maxPageReached, lastRead: Date.now() } : b
     ));
 
-    // Guest users: local only, no Firestore
-    if (!user || user.isAnonymous) return;
+    // === Stats & achievements — runs for ALL users including guests ===
+    // (updateSettings already skips Firestore for guests)
+    const stats: ReadingStats = {
+      totalPagesRead: 0,
+      unlockedAchievements: [],
+      streak: 0,
+      longestStreak: 0,
+      lastReadDate: '',
+      ...(settingsRef.current.stats || {}),
+    };
+    const newTotal = stats.totalPagesRead + pagesReadDiff;
+    const today = todayStr();
+    const yesterday = yesterdayStr();
+    let newStreak = stats.streak;
+    let newLongest = stats.longestStreak;
+    let statsChanged = pagesReadDiff > 0;
 
-    setDoc(doc(db, 'users', user.uid, 'books', activeBookId), { ...book, currentPage: page, maxPageReached, uid: user.uid }, { merge: true })
-      .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
+    // Update streak on ANY page read on a new day (even re-reads count)
+    if (stats.lastReadDate !== today) {
+      newStreak = stats.lastReadDate === yesterday ? stats.streak + 1 : 1;
+      newLongest = Math.max(newLongest, newStreak);
+      statsChanged = true;
 
-    if (pagesReadDiff > 0) {
-      const stats: ReadingStats = {
-        totalPagesRead: 0,
-        unlockedAchievements: [],
-        streak: 0,
-        longestStreak: 0,
-        lastReadDate: '',
-        ...(settingsRef.current.stats || {}),
-      };
-      const newTotal = stats.totalPagesRead + pagesReadDiff;
-
-      // === Streak logic ===
-      const today = todayStr();
-      const yesterday = yesterdayStr();
-      let newStreak = stats.streak;
-      let newLongest = stats.longestStreak;
-
-      if (stats.lastReadDate !== today) {
-        if (stats.lastReadDate === yesterday) {
-          newStreak += 1;
-        } else {
-          newStreak = 1; // either first time or missed days → reset to 1
-        }
-        newLongest = Math.max(newLongest, newStreak);
-
-        // Check streak achievements
-        const streakAch = STREAK_ACHIEVEMENTS.filter(a => {
-          const sid = `streak_${a.days}`;
-          return newStreak >= a.days && !sessionShownAchievementsRef.current.has(sid);
-        });
-        if (streakAch.length > 0) {
-          const highest = streakAch[streakAch.length - 1];
-          const sid = `streak_${highest.days}`;
-          sessionShownAchievementsRef.current.add(sid);
-          setAchievementQueue(q => [...q, { title: `${highest.days}-Day Streak! ${highest.title}`, icon: highest.icon }]);
-        }
-      }
-
-      // === Page achievements ===
-      const alreadyUnlocked = stats.unlockedAchievements;
-      const newlyUnlocked = ACHIEVEMENTS.filter(a =>
-        newTotal >= a.pages &&
-        !alreadyUnlocked.includes(a.id) &&
-        !sessionShownAchievementsRef.current.has(a.id)
-      );
-
-      if (newlyUnlocked.length > 0) {
-        newlyUnlocked.forEach(a => sessionShownAchievementsRef.current.add(a.id));
-        const highest = newlyUnlocked[newlyUnlocked.length - 1];
-        setAchievementQueue(q => [...q, { title: highest.title, icon: highest.icon }]);
-
-        await updateSettings({
-          stats: {
-            totalPagesRead: newTotal,
-            unlockedAchievements: [...alreadyUnlocked, ...newlyUnlocked.map(a => a.id)],
-            streak: newStreak,
-            longestStreak: newLongest,
-            lastReadDate: today,
-          },
-        });
-      } else {
-        updateSettings({
-          stats: {
-            ...stats,
-            totalPagesRead: newTotal,
-            streak: newStreak,
-            longestStreak: newLongest,
-            lastReadDate: today,
-          },
-        });
+      const streakAch = STREAK_ACHIEVEMENTS.filter(a => {
+        const sid = `streak_${a.days}`;
+        return newStreak >= a.days && !sessionShownAchievementsRef.current.has(sid);
+      });
+      if (streakAch.length > 0) {
+        const highest = streakAch[streakAch.length - 1];
+        const sid = `streak_${highest.days}`;
+        sessionShownAchievementsRef.current.add(sid);
+        setAchievementQueue(q => [...q, { title: `${highest.days}-Day Streak! ${highest.title}`, icon: highest.icon }]);
       }
     }
+
+    // Page achievements (only for newly reached pages)
+    const alreadyUnlocked = stats.unlockedAchievements;
+    const newlyUnlocked = pagesReadDiff > 0 ? ACHIEVEMENTS.filter(a =>
+      newTotal >= a.pages &&
+      !alreadyUnlocked.includes(a.id) &&
+      !sessionShownAchievementsRef.current.has(a.id)
+    ) : [];
+
+    if (newlyUnlocked.length > 0) {
+      newlyUnlocked.forEach(a => sessionShownAchievementsRef.current.add(a.id));
+      const highest = newlyUnlocked[newlyUnlocked.length - 1];
+      setAchievementQueue(q => [...q, { title: highest.title, icon: highest.icon }]);
+    }
+
+    if (statsChanged || newlyUnlocked.length > 0) {
+      updateSettings({
+        stats: {
+          totalPagesRead: newTotal,
+          unlockedAchievements: [...alreadyUnlocked, ...newlyUnlocked.map(a => a.id)],
+          streak: newStreak,
+          longestStreak: newLongest,
+          lastReadDate: today,
+        },
+      });
+    }
+
+    // Persist book progress to Firestore for signed-in users only
+    if (!user || user.isAnonymous) return;
+    setDoc(doc(db, 'users', user.uid, 'books', activeBookId), { ...book, currentPage: page, maxPageReached, uid: user.uid }, { merge: true })
+      .catch(e => logFirestoreError(e, OperationType.UPDATE, `users/${user.uid}/books/${activeBookId}`));
   }, [activeBookId, user, books, updateSettings]);
 
   const toggleBookmark = async (page: number) => {
@@ -548,118 +535,283 @@ export default function App() {
                 onToggleBookmark={toggleBookmark}
               />
             </ErrorBoundary>
-          ) : (
-            <div className="w-full h-full overflow-y-auto custom-scrollbar">
-              <div className="min-h-full flex flex-col items-center justify-center text-center px-6 py-14">
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                className="max-w-md w-full"
-              >
-                <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8"
-                  style={{ background: `${currentTheme.accent}18`, color: currentTheme.accent }}>
-                  <Book size={40} />
-                </div>
-                <h2 className="text-4xl font-bold mb-3 tracking-tight">
-                  Welcome, {user.displayName?.split(' ')[0] || 'Reader'}
-                </h2>
-                <p className="opacity-50 mb-1 text-base">Your personal reading companion, Ribi, is here.</p>
-                <p className="font-semibold mb-8 text-base" style={{ color: currentTheme.accent }}>
-                  Ribi Missed You.
-                </p>
+          ) : (() => {
+            const hour = new Date().getHours();
+            const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+            const firstName = user.displayName?.split(' ')[0] || 'Reader';
+            const lastBook = books.length > 0 ? [...books].sort((a, b) => b.lastRead - a.lastRead)[0] : null;
+            const achievementCount = settings.stats?.unlockedAchievements?.length || 0;
+            const longestStreak = settings.stats?.longestStreak || streak;
+            return (
+              <div className="w-full h-full overflow-y-auto custom-scrollbar">
+                <div className="max-w-lg mx-auto px-4 pt-8 pb-20 space-y-5">
 
-                {/* Streak card — glassmorphic */}
-                <div
-                  className="mx-auto mb-8 px-6 py-5 rounded-3xl flex items-center gap-5 max-w-sm glass glass-card"
-                  style={{
-                    background: streak > 0
-                      ? 'linear-gradient(135deg, rgba(251,146,60,0.14), rgba(249,115,22,0.07))'
-                      : `${currentTheme.secondary}cc`,
-                    border: streak > 0
-                      ? '1px solid rgba(251,146,60,0.28)'
-                      : `1px solid ${currentTheme.text}10`,
-                    boxShadow: streak > 0
-                      ? '0 8px 32px rgba(251,146,60,0.12)'
-                      : `0 4px 24px rgba(0,0,0,0.08)`,
-                  }}
-                >
-                  <div className="text-5xl select-none" style={{ filter: streak === 0 ? 'grayscale(1) opacity(0.3)' : 'none' }}>
-                    🔥
-                  </div>
-                  <div className="text-left">
-                    <div className="flex items-baseline gap-1.5">
-                      <span
-                        className="text-4xl font-black tracking-tight"
-                        style={{ color: streak > 0 ? '#F97316' : currentTheme.text, opacity: streak > 0 ? 1 : 0.25 }}
+                  {/* ── Greeting header ── */}
+                  <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold opacity-35 mb-0.5 tracking-widest uppercase">{greeting}</p>
+                        <h1 className="text-3xl font-black tracking-tight leading-none" style={{ color: currentTheme.text }}>
+                          {firstName}
+                          <span className="ml-2" style={{ color: currentTheme.accent }}>↗</span>
+                        </h1>
+                        <p className="text-xs mt-2 italic" style={{ color: currentTheme.accent, opacity: 0.7 }}>
+                          Visioned for maximizers, created for readers.
+                        </p>
+                      </div>
+                      <div
+                        className="w-13 h-13 rounded-2xl flex items-center justify-center text-xl font-black text-white shadow-lg"
+                        style={{
+                          background: `linear-gradient(135deg, ${currentTheme.accent}, ${currentTheme.accent}99)`,
+                          width: 52, height: 52,
+                          boxShadow: `0 8px 24px ${currentTheme.accent}40`,
+                        }}
                       >
-                        {streak}
-                      </span>
-                      <span className="text-sm font-semibold opacity-60" style={{ color: currentTheme.text }}>
-                        day streak
-                      </span>
-                    </div>
-                    <p className="text-xs opacity-40 mt-0.5" style={{ color: currentTheme.text }}>
-                      {streak === 0
-                        ? 'Read today to start your streak!'
-                        : streak === 1
-                        ? 'Great start! Come back tomorrow.'
-                        : `${totalPages.toLocaleString()} pages read total`}
-                    </p>
-                  </div>
-                  {streak >= 7 && (
-                    <div className="ml-auto text-right">
-                      <div className="text-xs font-bold px-2 py-1 rounded-full"
-                        style={{ background: 'rgba(251,146,60,0.2)', color: '#F97316' }}>
-                        {streak >= 30 ? '🏆' : streak >= 14 ? '⚡' : '🗓️'} {streak >= 30 ? 'Epic' : streak >= 14 ? 'Strong' : 'Week'}
+                        {firstName[0]?.toUpperCase() || 'R'}
                       </div>
                     </div>
-                  )}
-                </div>
+                  </motion.div>
 
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
-                  {books.length > 0 && (
-                    <motion.button
-                      whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                      onClick={() => {
-                        const last = [...books].sort((a, b) => b.lastRead - a.lastRead)[0];
-                        if (last) handleSelectBook(last.id);
-                      }}
-                      className="px-8 py-4 text-white rounded-2xl font-bold transition-all w-full sm:w-auto"
+                  {/* ── Streak card ── */}
+                  <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.08 }}>
+                    <div
+                      className="rounded-3xl p-5 glass glass-card"
                       style={{
-                        background: `linear-gradient(135deg, ${currentTheme.accent}, ${currentTheme.accent}cc)`,
-                        boxShadow: `0 12px 36px ${currentTheme.accent}45, 0 0 0 1px ${currentTheme.accent}30`,
+                        background: streak > 0
+                          ? 'linear-gradient(135deg, rgba(251,146,60,0.18), rgba(249,115,22,0.08))'
+                          : `${currentTheme.secondary}cc`,
+                        border: streak > 0
+                          ? '1px solid rgba(251,146,60,0.32)'
+                          : `1px solid ${currentTheme.text}10`,
+                        boxShadow: streak > 0 ? '0 8px 32px rgba(251,146,60,0.14)' : undefined,
                       }}
                     >
-                      Pick Up Where You Left
-                    </motion.button>
-                  )}
-                  <motion.button
-                    whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                    onClick={() => { setSidebarOpen(true); setActiveTab('library'); }}
-                    className="px-8 py-4 rounded-2xl font-bold transition-all w-full sm:w-auto glass"
-                    style={{
-                      background: `${currentTheme.secondary}cc`,
-                      border: `1px solid ${currentTheme.text}12`,
-                      color: currentTheme.text,
-                    }}
-                  >
-                    Explore Library
-                  </motion.button>
-                </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-5xl select-none" style={{ filter: streak === 0 ? 'grayscale(1) opacity(0.3)' : 'none' }}>🔥</div>
+                        <div className="flex-1">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-5xl font-black tracking-tight"
+                              style={{ color: streak > 0 ? '#F97316' : currentTheme.text, opacity: streak > 0 ? 1 : 0.2 }}>
+                              {streak}
+                            </span>
+                            <span className="text-sm font-semibold opacity-50" style={{ color: currentTheme.text }}>day streak</span>
+                          </div>
+                          <p className="text-xs opacity-40 mt-0.5" style={{ color: currentTheme.text }}>
+                            {streak === 0 ? 'Read today to start your streak!' : `Best: ${longestStreak} days · ${totalPages.toLocaleString()} pages total`}
+                          </p>
+                        </div>
+                        {streak > 0 && (
+                          <div className="text-right flex-shrink-0">
+                            <div className="text-2xl mb-1">
+                              {streak >= 30 ? '🏆' : streak >= 14 ? '⚡' : streak >= 7 ? '🌟' : '📖'}
+                            </div>
+                            <div className="text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+                              style={{ background: 'rgba(251,146,60,0.22)', color: '#F97316' }}>
+                              {streak >= 30 ? 'Epic' : streak >= 14 ? 'Strong' : streak >= 7 ? 'Week' : `Day ${streak}`}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
 
-                <div className="text-xs opacity-40 space-y-1.5 max-w-md mx-auto">
-                  <p>© 2024 Veuros. All rights reserved.</p>
-                  <p>Veuros — visionized by Veer Agnihotri in 2024, blending technology with life-changing habits.</p>
-                  <p className="font-bold mt-3 text-sm"
-                    style={{ background: 'linear-gradient(90deg,#fde68a,#f59e0b,#f97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', opacity: 1 }}>
-                    Founded by Veer Agnihotri
-                  </p>
+                  {/* ── Stats row ── */}
+                  <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.14 }}>
+                    <div className="grid grid-cols-3 gap-3">
+                      {([
+                        { label: 'Pages', value: totalPages.toLocaleString(), icon: '📖' },
+                        { label: 'Books', value: String(books.length), icon: '📚' },
+                        { label: 'Awards', value: String(achievementCount), icon: '🏅' },
+                      ] as { label: string; value: string; icon: string }[]).map(({ label, value, icon }) => (
+                        <div key={label}
+                          className="rounded-2xl p-4 text-center glass glass-card"
+                          style={{ background: `${currentTheme.secondary}bb`, border: `1px solid ${currentTheme.text}08` }}>
+                          <div className="text-xl mb-1">{icon}</div>
+                          <div className="text-xl font-black" style={{ color: currentTheme.text }}>{value}</div>
+                          <div className="text-[10px] opacity-35 mt-0.5 font-semibold tracking-wide uppercase">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+
+                  {/* ── Continue reading ── */}
+                  {lastBook && (
+                    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.19 }}>
+                      <p className="text-xs font-bold opacity-35 uppercase tracking-widest mb-3">Continue Reading</p>
+                      <button
+                        onClick={() => handleSelectBook(lastBook.id)}
+                        className="w-full text-left rounded-3xl p-5 glass glass-card transition-all active:scale-98"
+                        style={{
+                          background: `${currentTheme.secondary}cc`,
+                          border: `1px solid ${currentTheme.accent}22`,
+                          boxShadow: `0 8px 32px ${currentTheme.accent}10`,
+                        }}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 rounded-xl flex-shrink-0 flex items-center justify-center text-2xl"
+                            style={{ background: `${currentTheme.accent}1a`, color: currentTheme.accent, height: 60 }}>
+                            📖
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm leading-tight truncate" style={{ color: currentTheme.text }}>
+                              {lastBook.title}
+                            </p>
+                            <p className="text-xs opacity-40 mt-0.5">
+                              Page {lastBook.currentPage || 1} of {lastBook.totalPages}
+                            </p>
+                            <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: `${currentTheme.text}12` }}>
+                              <div className="h-full rounded-full transition-all"
+                                style={{
+                                  width: `${Math.min(100, Math.round(((lastBook.currentPage || 1) / lastBook.totalPages) * 100))}%`,
+                                  background: `linear-gradient(90deg, ${currentTheme.accent}, ${currentTheme.accent}bb)`,
+                                }} />
+                            </div>
+                            <p className="text-[10px] opacity-30 mt-1">
+                              {Math.min(100, Math.round(((lastBook.currentPage || 1) / lastBook.totalPages) * 100))}% complete
+                            </p>
+                          </div>
+                          <div className="flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center text-white"
+                            style={{ background: `linear-gradient(135deg, ${currentTheme.accent}, ${currentTheme.accent}bb)` }}>
+                            <span style={{ fontSize: 14 }}>▶</span>
+                          </div>
+                        </div>
+                      </button>
+                    </motion.div>
+                  )}
+
+                  {/* ── Recent books grid ── */}
+                  {books.length > 0 && (
+                    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.24 }}>
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-bold opacity-35 uppercase tracking-widest">My Library</p>
+                        <button
+                          onClick={() => { setSidebarOpen(true); setActiveTab('library'); }}
+                          className="text-xs font-semibold px-3 py-1 rounded-full transition-all"
+                          style={{ color: currentTheme.accent, background: `${currentTheme.accent}14` }}
+                        >
+                          View all →
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[...books].sort((a, b) => b.lastRead - a.lastRead).slice(0, 4).map((book, idx) => {
+                          const pct = Math.min(100, Math.round(((book.currentPage || 1) / book.totalPages) * 100));
+                          return (
+                            <motion.button
+                              key={book.id}
+                              initial={{ opacity: 0, scale: 0.96 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              transition={{ delay: 0.28 + idx * 0.06 }}
+                              onClick={() => handleSelectBook(book.id)}
+                              className="text-left rounded-2xl p-4 glass glass-card transition-all"
+                              style={{ background: `${currentTheme.secondary}cc`, border: `1px solid ${currentTheme.text}08` }}
+                            >
+                              <div className="w-10 h-12 rounded-lg flex items-center justify-center text-lg mb-3"
+                                style={{ background: `${currentTheme.accent}18`, color: currentTheme.accent }}>
+                                📖
+                              </div>
+                              <p className="font-semibold text-xs leading-tight mb-2 line-clamp-2" style={{ color: currentTheme.text }}>
+                                {book.title}
+                              </p>
+                              <div className="h-1 rounded-full overflow-hidden mb-1" style={{ background: `${currentTheme.text}10` }}>
+                                <div className="h-full rounded-full" style={{ width: `${pct}%`, background: currentTheme.accent }} />
+                              </div>
+                              <p className="text-[10px] opacity-30">{pct}%</p>
+                            </motion.button>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* ── Empty library ── */}
+                  {books.length === 0 && (
+                    <motion.div
+                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
+                      className="text-center py-12"
+                    >
+                      <div className="text-6xl mb-5 opacity-25">📚</div>
+                      <h3 className="text-xl font-bold mb-2" style={{ color: currentTheme.text }}>Your library awaits</h3>
+                      <p className="text-sm opacity-40 mb-8">Upload a PDF to begin your journey</p>
+                      <motion.button
+                        whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                        onClick={() => { setSidebarOpen(true); setActiveTab('library'); }}
+                        className="px-10 py-4 rounded-2xl font-bold text-white transition-all"
+                        style={{
+                          background: `linear-gradient(135deg, ${currentTheme.accent}, ${currentTheme.accent}cc)`,
+                          boxShadow: `0 12px 36px ${currentTheme.accent}40`,
+                        }}
+                      >
+                        Upload a PDF
+                      </motion.button>
+                    </motion.div>
+                  )}
+
+                  {/* ── Action buttons ── */}
+                  {books.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.34 }}
+                      className="flex gap-3"
+                    >
+                      <motion.button
+                        whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                        onClick={() => { setSidebarOpen(true); setActiveTab('library'); }}
+                        className="flex-1 py-4 rounded-2xl font-bold text-white transition-all"
+                        style={{
+                          background: `linear-gradient(135deg, ${currentTheme.accent}, ${currentTheme.accent}cc)`,
+                          boxShadow: `0 8px 28px ${currentTheme.accent}35`,
+                        }}
+                      >
+                        Open Library
+                      </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                        onClick={() => { setSidebarOpen(true); setActiveTab('settings'); }}
+                        className="px-6 py-4 rounded-2xl font-bold glass transition-all"
+                        style={{ background: `${currentTheme.secondary}cc`, border: `1px solid ${currentTheme.text}10`, color: currentTheme.text }}
+                      >
+                        Settings
+                      </motion.button>
+                    </motion.div>
+                  )}
+
+                  {/* ── Veuros brand ── */}
+                  <motion.div
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.42 }}
+                    className="pt-6 text-center"
+                    style={{ borderTop: `1px solid ${currentTheme.text}08` }}
+                  >
+                    <h3 style={{
+                      fontFamily: '"Orbitron","Space Grotesk",system-ui,sans-serif',
+                      fontSize: '1.35rem',
+                      fontWeight: 900,
+                      letterSpacing: '0.18em',
+                      background: 'linear-gradient(135deg,#fff 0%,#93c5fd 40%,#3b82f6 100%)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundClip: 'text',
+                      marginBottom: 8,
+                    }}>
+                      VEUROS
+                    </h3>
+                    <p className="text-xs opacity-25 leading-relaxed max-w-xs mx-auto">
+                      Redefining technology — visionized by Veer Agnihotri in 2024, blending innovation with life-changing habits.
+                    </p>
+                    <p className="text-[10px] font-bold mt-3"
+                      style={{
+                        background: 'linear-gradient(90deg,#fde68a,#f59e0b,#f97316)',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundClip: 'text',
+                        opacity: 0.8,
+                      }}>
+                      Founded by Veer Agnihotri · © 2024 Veuros
+                    </p>
+                  </motion.div>
+
                 </div>
-              </motion.div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </main>
 
         {/* Sidebar */}

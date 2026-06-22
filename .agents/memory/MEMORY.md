@@ -1,0 +1,7 @@
+- [PDF dark mode filter](pdf-dark-mode-filter.md) — use `invert(1)` only for dark/midnight; `invert(1) sepia(20%) hue-rotate(185deg)` for nord. Never use `invert(90%) hue-rotate(180deg)` — causes grey/blank pages.
+- [PDF brightness overlay](pdf-brightness-overlay.md) — use an overlay div `rgba(0,0,0,N)` where N=(100-brightness)/100*0.88. CSS `brightness()` washes out text contrast.
+- [PDF quality scaling](pdf-quality-scaling.md) — multiply DPR by qualityMultiplier (Q1=0.75, Q2=1.0, Q3=1.5, Q4=2.0) on the render viewport, not CSS tricks. Cache key must include quality level.
+- [Continuous mode windowed rendering](continuous-mode-windowed.md) — render only pages within ±6 of currentPage; show sized placeholders for others. IntersectionObserver with window root can't track visibility inside a scrollable container.
+- [Streak for all users](streak-all-users.md) — streak tracking must run for guests too (updateSettings skips Firestore for guests already). Decouple streak from pagesReadDiff>0; update on ANY page read on a new day.
+- [Google sign-in redirect fallback](google-signin-redirect.md) — try signInWithPopup first; fall back to signInWithRedirect on auth/popup-blocked; handle getRedirectResult on mount. auth/unauthorized-domain needs domain added in Firebase Console.
+- [Screenshot tool catches splash](screenshot-splash-note.md) — the screenshot tool reloads the iframe each call, always triggering the 5.8s VEUROS splash. Use TypeScript check + HMR logs to verify app health instead.

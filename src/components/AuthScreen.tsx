@@ -1,8 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
+import {
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  signInAnonymously,
+} from 'firebase/auth';
 import { auth } from '../firebase';
-import { BookOpen, Lock, Mail, Eye, EyeOff, AlertCircle, UserX } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, AlertCircle, UserX } from 'lucide-react';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL as string | undefined;
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD as string | undefined;
@@ -18,6 +25,11 @@ export const AuthScreen: React.FC = () => {
   const logoClickCount = useRef(0);
   const logoClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Handle redirect result (fires when returning from signInWithRedirect)
+  useEffect(() => {
+    getRedirectResult(auth).catch(() => {});
+  }, []);
+
   // Auto-login for admin device on mount
   useEffect(() => {
     const isAdminDevice = localStorage.getItem(ADMIN_DEVICE_KEY) === 'true';
@@ -29,12 +41,26 @@ export const AuthScreen: React.FC = () => {
   const handleLogin = async () => {
     setError(null);
     setLoading(true);
+    const provider = new GoogleAuthProvider();
     try {
-      const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
-        setError('Sign-in failed. Please try again.');
+    } catch (popupErr: any) {
+      const code = popupErr?.code ?? '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setLoading(false);
+        return;
+      }
+      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+        try {
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch {
+          setError('Sign-in failed. Please try again.');
+        }
+      } else if (code === 'auth/unauthorized-domain') {
+        setError('This domain is not authorized. Ask the admin to add it in Firebase Console → Authentication → Authorized domains.');
+      } else {
+        setError('Sign-in failed. Please try again or use guest mode.');
       }
     } finally {
       setLoading(false);
@@ -122,7 +148,16 @@ export const AuthScreen: React.FC = () => {
                 border: '1px solid rgba(59,130,246,0.25)',
                 boxShadow: '0 0 30px rgba(59,130,246,0.15)',
               }}>
-              <BookOpen className="w-10 h-10 text-blue-400" />
+              <span style={{
+                fontFamily: '"Orbitron","Space Grotesk",system-ui,sans-serif',
+                fontSize: '1.6rem',
+                fontWeight: 900,
+                letterSpacing: '0.08em',
+                background: 'linear-gradient(135deg,#93c5fd,#3b82f6)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+              }}>R</span>
             </div>
           </motion.div>
 

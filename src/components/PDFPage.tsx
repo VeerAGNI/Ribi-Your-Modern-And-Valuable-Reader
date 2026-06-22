@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// LRU page cache — stores rendered canvases for fast re-display
-const PAGE_CACHE_MAX = 8;
+const PAGE_CACHE_MAX = 6;
 const pageCache = new Map<string, HTMLCanvasElement>();
 
 function evictCache() {
@@ -19,7 +18,6 @@ export function clearPageCacheByFingerprint(fingerprint: string) {
   }
 }
 
-// Global semaphore — max 3 concurrent renders to prevent OOM
 let activeSemCount = 0;
 const MAX_CONCURRENT = 3;
 const semQueue: Array<() => void> = [];
@@ -34,7 +32,6 @@ function semRelease() {
   if (next) { activeSemCount++; next(); }
 }
 
-// Draw canvas pixel data to a new canvas (cloneNode does NOT copy pixels)
 function copyCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
   const dst = document.createElement('canvas');
   dst.width = src.width;
@@ -44,6 +41,20 @@ function copyCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = dst.getContext('2d', { alpha: false });
   if (ctx) ctx.drawImage(src, 0, 0);
   return dst;
+}
+
+function getQualityMultiplier(quality: number): number {
+  if (quality >= 4) return 2.0;
+  if (quality >= 3) return 1.5;
+  if (quality >= 2) return 1.0;
+  return 0.75;
+}
+
+function buildPdfFilter(theme: string): string {
+  if (theme === 'dark' || theme === 'midnight') return 'invert(1)';
+  if (theme === 'nord') return 'invert(1) sepia(20%) hue-rotate(185deg)';
+  if (theme === 'sepia') return 'sepia(40%)';
+  return 'none';
 }
 
 interface PDFPageProps {
@@ -56,6 +67,7 @@ interface PDFPageProps {
   isLandscape: boolean;
   renderQuality: number;
   onVisible: (pageNumber: number) => void;
+  observerRoot?: HTMLElement | null;
 }
 
 export const PDFPage = React.memo(({
@@ -63,11 +75,11 @@ export const PDFPage = React.memo(({
   pageNumber,
   scale,
   brightness,
-  contrast,
   theme,
   isLandscape,
   renderQuality,
   onVisible,
+  observerRoot,
 }: PDFPageProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -78,12 +90,12 @@ export const PDFPage = React.memo(({
   const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
   const isMounted = useRef(true);
 
-  // Clamp devicePixelRatio to max 2 to prevent OOM on high-DPI mobile
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const qualityMultiplier = getQualityMultiplier(renderQuality);
 
   const cacheKey = useMemo(
-    () => `${(pdf as any).fingerprints?.[0] ?? 'pdf'}-p${pageNumber}-s${scale.toFixed(3)}-d${dpr.toFixed(1)}`,
-    [pdf, pageNumber, scale, dpr]
+    () => `${(pdf as any).fingerprints?.[0] ?? 'pdf'}-p${pageNumber}-s${scale.toFixed(3)}-d${dpr.toFixed(1)}-q${renderQuality}`,
+    [pdf, pageNumber, scale, dpr, renderQuality]
   );
 
   useEffect(() => {
@@ -94,7 +106,6 @@ export const PDFPage = React.memo(({
     };
   }, []);
 
-  // IntersectionObserver — 2000px margin so pages preload before they scroll into view
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -103,24 +114,26 @@ export const PDFPage = React.memo(({
         if (!isMounted.current) return;
         if (entry.isIntersecting) { setIsInView(true); onVisible(pageNumber); }
       },
-      { threshold: 0, rootMargin: '2000px 0px' }
+      {
+        root: observerRoot ?? null,
+        threshold: 0,
+        rootMargin: observerRoot ? '800px 0px' : '300px 0px',
+      }
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [pageNumber, onVisible]);
+  }, [pageNumber, onVisible, observerRoot]);
 
-  // Only pre-render first 4 pages; rest wait for IntersectionObserver
   const [shouldRender, setShouldRender] = useState(false);
   useEffect(() => {
     if (isInView) {
       setShouldRender(true);
-    } else if (!isRendered && pageNumber <= 4) {
-      const t = setTimeout(() => { if (isMounted.current) setShouldRender(true); }, (pageNumber - 1) * 150);
+    } else if (!isRendered && pageNumber <= 2) {
+      const t = setTimeout(() => { if (isMounted.current) setShouldRender(true); }, (pageNumber - 1) * 80);
       return () => clearTimeout(t);
     }
   }, [isInView, isRendered, pageNumber]);
 
-  // Reset rendered state when cache key changes (scale/dpr/page change)
   useEffect(() => {
     setIsRendered(false);
     setRenderError(null);
@@ -130,7 +143,6 @@ export const PDFPage = React.memo(({
     if (!shouldRender || !isMounted.current || !canvasContainerRef.current || !pdf) return;
     if (isRendered) return;
 
-    // ── Cache hit: draw cached canvas to a new canvas ──
     const cached = pageCache.get(cacheKey);
     if (cached) {
       if (canvasContainerRef.current && isMounted.current) {
@@ -142,10 +154,9 @@ export const PDFPage = React.memo(({
       return;
     }
 
-    // ── Cancel any prior render task ──
     if (renderTaskRef.current) {
       renderTaskRef.current.cancel();
-      try { await renderTaskRef.current.promise; } catch { /* ignore cancel */ }
+      try { await renderTaskRef.current.promise; } catch { }
       renderTaskRef.current = null;
     }
 
@@ -160,11 +171,12 @@ export const PDFPage = React.memo(({
       setPageDimensions({ width: viewport.width, height: viewport.height });
 
       const scaledViewport = page.getViewport({ scale });
-      // Render at devicePixelRatio only (no quality multiplier — sharpness is via CSS filter)
-      // Clamp canvas dimensions to 8000px to stay within mobile GPU limits
       const maxDim = 8000;
-      const renderDpr = Math.min(dpr, maxDim / Math.max(scaledViewport.width, scaledViewport.height));
-      const renderViewport = page.getViewport({ scale: scale * renderDpr });
+      const effectiveDpr = Math.min(
+        dpr * qualityMultiplier,
+        maxDim / Math.max(scaledViewport.width, scaledViewport.height)
+      );
+      const renderViewport = page.getViewport({ scale: scale * effectiveDpr });
 
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
@@ -174,7 +186,9 @@ export const PDFPage = React.memo(({
       ctx.imageSmoothingQuality = 'high';
       canvas.width = renderViewport.width;
       canvas.height = renderViewport.height;
-      canvas.className = 'block w-full h-full';
+      canvas.style.display = 'block';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
 
       const task = page.render({ canvasContext: ctx, viewport: renderViewport } as any);
       renderTaskRef.current = task;
@@ -183,7 +197,6 @@ export const PDFPage = React.memo(({
 
       if (!isMounted.current) { semRelease(); return; }
 
-      // Store in cache and display (put original canvas directly in DOM)
       evictCache();
       pageCache.set(cacheKey, canvas);
       if (canvasContainerRef.current) {
@@ -195,75 +208,74 @@ export const PDFPage = React.memo(({
     } catch (err: any) {
       const name = err?.name ?? 'UnknownError';
       if (name === 'RenderingCancelledException') { semRelease(); return; }
-
-      // Detailed error for debugging — no more guesswork
-      const detail = `[PDFPage] Page ${pageNumber} render failed | ${name}: ${err?.message ?? err}`;
-      console.error(detail, { scale, dpr, cacheKey, ua: navigator.userAgent.slice(0, 80) });
-
+      console.error(`[PDFPage] Page ${pageNumber} failed | ${name}: ${err?.message}`);
       if (isMounted.current) {
-        if (err?.message?.includes('out of memory') || err?.message?.includes('memory')) {
-          setRenderError('Out of memory. Try lowering the zoom level or quality in settings.');
-        } else if (err?.message?.includes('canvas') || name === 'CanvasError') {
-          setRenderError('Canvas size exceeded browser limit. Try zooming out.');
-        } else {
-          setRenderError(`Render failed (${name}). Tap to retry.`);
-        }
+        if (err?.message?.includes('memory')) setRenderError('Out of memory. Try lowering quality.');
+        else setRenderError('Render failed. Tap to retry.');
       }
     } finally {
       semRelease();
       renderTaskRef.current = null;
     }
-  }, [pdf, pageNumber, scale, dpr, cacheKey, shouldRender, isRendered]);
+  }, [pdf, pageNumber, scale, dpr, qualityMultiplier, cacheKey, shouldRender, isRendered]);
 
   useEffect(() => { renderPage(); }, [renderPage]);
 
-  // CSS-only sharpness filter — quality 1-4 maps to contrast/saturate boosts
-  // This is GPU-composited and adds ZERO render latency unlike resolution multipliers
-  const getPdfFilter = () => {
-    const sharpContrast = renderQuality >= 4 ? 110 : renderQuality >= 3 ? 107 : renderQuality >= 2 ? 104 : 100;
-    const sharpSaturate = renderQuality >= 4 ? 108 : renderQuality >= 3 ? 105 : renderQuality >= 2 ? 103 : 100;
-    let f = `brightness(${brightness}%) contrast(${Math.round(contrast * sharpContrast / 100)}%) saturate(${sharpSaturate}%)`;
-    if (theme === 'dark' || theme === 'midnight' || theme === 'nord') f += ' invert(90%) hue-rotate(180deg)';
-    else if (theme === 'sepia') f += ' sepia(40%)';
-    return f;
+  const retry = () => {
+    setRenderError(null);
+    setIsRendered(false);
+    setShouldRender(false);
+    setTimeout(() => setShouldRender(true), 50);
   };
 
-  const retry = () => { setRenderError(null); setIsRendered(false); setShouldRender(false); setTimeout(() => setShouldRender(true), 50); };
+  const filter = buildPdfFilter(theme);
+  const brightnessOverlayOpacity = brightness < 100 ? ((100 - brightness) / 100) * 0.88 : 0;
+  const bgColor = (theme === 'dark' || theme === 'midnight' || theme === 'nord') ? '#000' : '#fff';
 
   return (
     <div
       ref={containerRef}
-      className={`flex justify-center items-start w-full ${isLandscape ? 'p-0' : 'py-4 px-4'}`}
-      style={{ minHeight: isLandscape ? 100 : 300 }}
+      className={`flex justify-center items-start w-full ${isLandscape ? 'py-1 px-0' : 'py-3 px-3'}`}
+      style={{ minHeight: isLandscape ? 80 : 200 }}
     >
       <div
-        className="bg-white overflow-hidden rounded-sm relative transition-shadow duration-300"
+        className="overflow-hidden rounded-sm relative"
         style={{
-          filter: getPdfFilter(),
+          filter,
           boxShadow: theme === 'sepia'
-            ? '0 16px 40px -8px rgba(91,70,54,0.3)'
-            : '0 16px 48px -12px rgba(0,0,0,0.5)',
+            ? '0 12px 32px -6px rgba(91,70,54,0.3)'
+            : '0 12px 40px -10px rgba(0,0,0,0.5)',
           width: '100%',
           maxWidth: pageDimensions ? `${pageDimensions.width * scale}px` : 'none',
           aspectRatio: pageDimensions ? `${pageDimensions.width} / ${pageDimensions.height}` : 'auto',
+          backgroundColor: bgColor,
         }}
       >
-        {/* Canvas container — sized by the canvas itself */}
         <div ref={canvasContainerRef} className="w-full h-full" />
 
+        {brightnessOverlayOpacity > 0 && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: `rgba(0,0,0,${brightnessOverlayOpacity.toFixed(3)})`, zIndex: 2 }}
+          />
+        )}
+
         {!isRendered && !renderError && (
-          <div className="absolute inset-0 flex items-center justify-center"
-            style={{ minWidth: 180, minHeight: 260, background: 'rgba(248,248,248,0.8)', backdropFilter: 'blur(4px)' }}>
-            <div className="flex flex-col items-center gap-2.5">
-              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-[10px] opacity-40 text-slate-600 font-mono">p.{pageNumber}</span>
+          <div
+            className="absolute inset-0 flex items-center justify-center"
+            style={{ minWidth: 160, minHeight: 220, background: 'rgba(248,248,248,0.92)', backdropFilter: 'blur(4px)' }}
+          >
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+              <span className="text-[10px] opacity-30 text-slate-500 font-mono">p.{pageNumber}</span>
             </div>
           </div>
         )}
 
         {renderError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6"
-            style={{ minWidth: 180, minHeight: 260, background: 'rgba(248,248,248,0.92)' }}
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 cursor-pointer"
+            style={{ minWidth: 160, minHeight: 220, background: 'rgba(248,248,248,0.95)' }}
             onClick={retry}
           >
             <span className="text-3xl">⚠️</span>
@@ -282,5 +294,6 @@ export const PDFPage = React.memo(({
   prev.theme === next.theme &&
   prev.isLandscape === next.isLandscape &&
   prev.renderQuality === next.renderQuality &&
-  prev.pdf === next.pdf
+  prev.pdf === next.pdf &&
+  prev.observerRoot === next.observerRoot
 );
