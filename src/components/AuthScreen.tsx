@@ -142,23 +142,16 @@ export const AuthScreen: React.FC = () => {
             onClick={handleLogoClick}
             whileTap={{ scale: 0.92 }}
           >
-            <div className="p-4 rounded-2xl relative"
+            <img
+              src="/ribi-logo.png"
+              alt="Ribi"
               style={{
-                background: 'rgba(59,130,246,0.1)',
-                border: '1px solid rgba(59,130,246,0.25)',
-                boxShadow: '0 0 30px rgba(59,130,246,0.15)',
-              }}>
-              <span style={{
-                fontFamily: '"Orbitron","Space Grotesk",system-ui,sans-serif',
-                fontSize: '1.6rem',
-                fontWeight: 900,
-                letterSpacing: '0.08em',
-                background: 'linear-gradient(135deg,#93c5fd,#3b82f6)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                backgroundClip: 'text',
-              }}>R</span>
-            </div>
+                width: 80,
+                height: 80,
+                objectFit: 'contain',
+                filter: 'drop-shadow(0 0 18px rgba(139,92,246,0.55)) drop-shadow(0 0 8px rgba(99,102,241,0.4))',
+              }}
+            />
           </motion.div>
 
           <h1 className="text-3xl font-bold text-white mb-1 tracking-tight">

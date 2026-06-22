@@ -20,10 +20,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.veuros.ribi.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -424,14 +430,25 @@ private fun BookCard(
     onDelete: () -> Unit
 ) {
     val progress = if (book.totalPages > 0) book.currentPage.toFloat() / book.totalPages else 0f
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val cardScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "bookCardScale"
+    )
 
     Row(
         modifier = Modifier
+            .scale(cardScale)
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(bgColor)
             .border(1.dp, textColor.copy(0.08f), RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -779,22 +796,21 @@ private fun AboutTabContent(textColor: Color, accentColor: Color) {
         // App info
         Column(horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(accentColor.copy(0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.MenuBook, null, tint = accentColor, modifier = Modifier.size(36.dp))
-            }
-            Spacer(Modifier.height(12.dp))
+            Image(
+                painter = painterResource(id = R.drawable.ribi_logo),
+                contentDescription = "Ribi",
+                modifier = Modifier.size(88.dp),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(Modifier.height(14.dp))
             Text("Ribi", color = textColor, fontSize = 26.sp, fontWeight = FontWeight.Black)
             Text("v1.0.0", color = textColor.copy(0.4f), fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Redefining Technology",
-                color = textColor.copy(0.5f), fontSize = 12.sp, letterSpacing = 2.sp
+            Spacer(Modifier.height(10.dp))
+            Image(
+                painter = painterResource(id = R.drawable.veuros_logo),
+                contentDescription = "Veuros",
+                modifier = Modifier.width(110.dp),
+                contentScale = ContentScale.Fit
             )
         }
 

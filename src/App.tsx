@@ -533,6 +533,7 @@ export default function App() {
                 renderQuality={settings.renderQuality ?? 2}
                 bookmarks={activeBook?.bookmarks || []}
                 onToggleBookmark={toggleBookmark}
+                readAloudRate={settings.readAloudRate ?? 0.65}
               />
             </ErrorBoundary>
           ) : (() => {
@@ -780,19 +781,18 @@ export default function App() {
                     className="pt-6 text-center"
                     style={{ borderTop: `1px solid ${currentTheme.text}08` }}
                   >
-                    <h3 style={{
-                      fontFamily: '"Orbitron","Space Grotesk",system-ui,sans-serif',
-                      fontSize: '1.35rem',
-                      fontWeight: 900,
-                      letterSpacing: '0.18em',
-                      background: 'linear-gradient(135deg,#fff 0%,#93c5fd 40%,#3b82f6 100%)',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundClip: 'text',
-                      marginBottom: 8,
-                    }}>
-                      VEUROS
-                    </h3>
+                    <img
+                      src="/veuros-logo.png"
+                      alt="Veuros"
+                      style={{
+                        width: 148,
+                        objectFit: 'contain',
+                        margin: '0 auto 10px',
+                        filter: settings.theme === 'light'
+                          ? 'brightness(0.82) drop-shadow(0 0 8px rgba(59,130,246,0.18))'
+                          : 'brightness(1.1) drop-shadow(0 0 12px rgba(147,97,253,0.28))',
+                      }}
+                    />
                     <p className="text-xs opacity-25 leading-relaxed max-w-xs mx-auto">
                       Redefining technology — visionized by Veer Agnihotri in 2024, blending innovation with life-changing habits.
                     </p>

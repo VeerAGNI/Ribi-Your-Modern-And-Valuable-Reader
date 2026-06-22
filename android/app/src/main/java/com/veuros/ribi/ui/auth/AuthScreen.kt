@@ -35,7 +35,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.veuros.ribi.R
 import com.veuros.ribi.ui.theme.RibiOrange
 
 @Composable
@@ -125,10 +132,7 @@ fun AuthScreen(
                 // Logo (tappable for admin access)
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF3B82F6).copy(0.12f))
-                        .border(1.dp, Color(0xFF3B82F6).copy(0.25f), RoundedCornerShape(20.dp))
+                        .size(88.dp)
                         .clickable {
                             val now = System.currentTimeMillis()
                             if (now - lastClickTime > 1500L) logoClickCount = 0
@@ -141,11 +145,11 @@ fun AuthScreen(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.MenuBook,
+                    Image(
+                        painter = painterResource(id = R.drawable.ribi_logo),
                         contentDescription = "Ribi Logo",
-                        tint = Color(0xFF60A5FA),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(88.dp),
+                        contentScale = ContentScale.Fit
                     )
                 }
 
@@ -288,11 +292,19 @@ fun AuthScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                // Google sign-in button
+                // Google sign-in button (spring press animation)
+                val googleInteraction = remember { MutableInteractionSource() }
+                val googlePressed by googleInteraction.collectIsPressedAsState()
+                val googleScale by animateFloatAsState(
+                    targetValue = if (googlePressed) 0.97f else 1f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                    label = "googleBtnScale"
+                )
                 Button(
                     onClick = { viewModel.signInWithGoogle(context) },
                     enabled = !uiState.isLoading,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    interactionSource = googleInteraction,
+                    modifier = Modifier.fillMaxWidth().height(56.dp).scale(googleScale),
                     shape = RoundedCornerShape(18.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White.copy(alpha = 0.97f),

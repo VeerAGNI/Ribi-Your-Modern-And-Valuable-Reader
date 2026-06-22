@@ -31,6 +31,7 @@ export interface ReaderSettings {
   brightness: number;
   renderQuality: number;
   autoNightMode?: boolean;
+  readAloudRate?: number;
   stats?: ReadingStats;
 }
 

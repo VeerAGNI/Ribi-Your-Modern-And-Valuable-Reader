@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   brightness: 100,
   renderQuality: 2,
   autoNightMode: false,
+  readAloudRate: 0.65,
   stats: {
     totalPagesRead: 0,
     unlockedAchievements: [],

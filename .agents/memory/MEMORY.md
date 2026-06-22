@@ -1,3 +1,6 @@
+- [Brand assets web](brand-assets-web.md) — logos are in `public/ribi-logo.png` (transparent) and `public/veuros-logo.png` (transparent); splash bg at `public/splash-bg.png`. Use `filter: brightness()` to adjust logo visibility per theme.
+- [Brand assets android](brand-assets-android.md) — logos are in `android/app/src/main/res/drawable/` as `ribi_logo.png`, `veuros_logo.png`, `splash_background.png`. Use `Image(painterResource(R.drawable.X))` — import `androidx.compose.foundation.Image`.
+- [Android spring press animations](android-spring-press.md) — use `MutableInteractionSource + collectIsPressedAsState + animateFloatAsState(spring(...))` for Apple-like press scale on buttons/cards. Needs `animation.core.*`, `foundation.interaction.*`, `ui.draw.scale` imports.
 - [PDF dark mode filter](pdf-dark-mode-filter.md) — use `invert(1)` only for dark/midnight; `invert(1) sepia(20%) hue-rotate(185deg)` for nord. Never use `invert(90%) hue-rotate(180deg)` — causes grey/blank pages.
 - [PDF brightness overlay](pdf-brightness-overlay.md) — use an overlay div `rgba(0,0,0,N)` where N=(100-brightness)/100*0.88. CSS `brightness()` washes out text contrast.
 - [PDF quality scaling](pdf-quality-scaling.md) — multiply DPR by qualityMultiplier (Q1=0.75, Q2=1.0, Q3=1.5, Q4=2.0) on the render viewport, not CSS tricks. Cache key must include quality level.

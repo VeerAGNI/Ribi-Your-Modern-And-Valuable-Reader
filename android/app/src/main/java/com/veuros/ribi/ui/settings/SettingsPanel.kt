@@ -245,9 +245,9 @@ fun SettingsPanel(
                     ) {
                         Text("Slow", color = textColor.copy(0.4f), fontSize = 10.sp)
                         Slider(
-                            value = settings.autoScrollSpeed.coerceIn(0.1f, 10f),
+                            value = settings.autoScrollSpeed.coerceIn(0.02f, 10f),
                             onValueChange = { onAutoScrollChange(settings.isAutoScrolling, it) },
-                            valueRange = 0.1f..10f,
+                            valueRange = 0.02f..10f,
                             modifier = Modifier.weight(1f),
                             colors = SliderDefaults.colors(
                                 thumbColor = accentColor,

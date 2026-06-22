@@ -142,7 +142,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
         <div className="flex items-center gap-3">
           <span className="text-[10px] opacity-40" style={{ color: currentTheme.text }}>Slow</span>
           <input
-            type="range" min="0.1" max="10" step="0.1"
+            type="range" min="0.02" max="10" step="0.02"
             value={settings.autoScrollSpeed}
             onChange={e => onUpdate({ autoScrollSpeed: parseFloat(e.target.value) })}
             className="flex-1 h-1.5 rounded-lg appearance-none cursor-pointer accent-blue-500"
@@ -150,6 +150,32 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate
           />
           <span className="text-[10px] opacity-40" style={{ color: currentTheme.text }}>Fast</span>
         </div>
+        <p className="text-[10px] opacity-35 mt-2 leading-relaxed" style={{ color: currentTheme.text }}>
+          Tip: drag all the way left for a very slow, comfortable reading pace.
+        </p>
+      </section>
+
+      {/* Read Aloud Speed */}
+      <section>
+        <SectionHeader
+          label="Read Aloud Speed"
+          value={`${((settings.readAloudRate ?? 0.65) * 100).toFixed(0)}%`}
+          color={currentTheme.text}
+        />
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] opacity-40" style={{ color: currentTheme.text }}>Slow</span>
+          <input
+            type="range" min="0.3" max="1.6" step="0.05"
+            value={settings.readAloudRate ?? 0.65}
+            onChange={e => onUpdate({ readAloudRate: parseFloat(e.target.value) })}
+            className="flex-1 h-1.5 rounded-lg appearance-none cursor-pointer accent-purple-500"
+            style={{ background: 'rgba(0,0,0,0.15)' }}
+          />
+          <span className="text-[10px] opacity-40" style={{ color: currentTheme.text }}>Fast</span>
+        </div>
+        <p className="text-[10px] opacity-35 mt-2 leading-relaxed" style={{ color: currentTheme.text }}>
+          Controls the speed of the Read Aloud voice. Default is 65% — comfortable for dense content.
+        </p>
       </section>
     </div>
   );

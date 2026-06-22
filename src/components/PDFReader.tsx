@@ -28,6 +28,7 @@ interface PDFReaderProps {
   renderQuality: number;
   bookmarks: BookmarkType[];
   onToggleBookmark: (page: number) => void;
+  readAloudRate?: number;
 }
 
 function formatReadingTime(pages: number): string {
@@ -50,6 +51,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
   renderQuality,
   bookmarks,
   onToggleBookmark,
+  readAloudRate,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -400,7 +402,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({
       if (!text) { setIsReadingAloud(false); return; }
 
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.95;
+      utterance.rate = readAloudRate ?? 0.65;
       utterance.pitch = 1;
       utterance.lang = 'en-US';
       utterance.onend = () => { utteranceRef.current = null; setIsReadingAloud(false); };
